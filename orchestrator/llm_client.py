@@ -9,9 +9,10 @@ logger = logging.getLogger(__name__)
 
 
 class OllamaClient:
-    def __init__(self, base_url="http://localhost:11434", model="qwen3:8b"):
+    def __init__(self, base_url="http://localhost:11434", model="qwen3:8b", disable_thinking=False):
         self.base_url = base_url
         self.model = model
+        self.disable_thinking = disable_thinking
 
     def decide(self, context: str) -> dict:
         """Ask the LLM to make a routing decision.
@@ -41,16 +42,21 @@ Rules:
 - Do NOT include thinking tags or markdown formatting"""
 
         try:
+            # Qwen3: append /no_think to suppress thinking tags in output
+            prompt = context
+            if self.disable_thinking:
+                prompt = context + " /no_think"
+
             response = requests.post(
                 f"{self.base_url}/api/generate",
                 json={
                     "model": self.model,
-                    "prompt": context,
+                    "prompt": prompt,
                     "system": system_prompt,
                     "stream": False,
                     "options": {
                         "temperature": 0.3,
-                        "num_predict": 1024,
+                        "num_predict": 4096,
                     },
                 },
                 timeout=60,

@@ -48,6 +48,7 @@ with open(config_path) as f:
 llm = OllamaClient(
     base_url=config["llm"]["base_url"],
     model=config["llm"]["model"],
+    disable_thinking=config["llm"].get("disable_thinking", False),
 )
 
 mailbox_dir = str(Path(__file__).parent / config["polling"]["mailbox_dir"])
