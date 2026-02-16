@@ -1,0 +1,44 @@
+# Orchestrator Configuration
+
+# LLM settings (local model via Ollama)
+llm:
+  provider: ollama
+  model: qwen3:8b
+  base_url: http://localhost:11434
+  temperature: 0.3
+  max_tokens: 1024
+  disable_thinking: true
+
+# Polling settings
+# If you ran scripts/migrate-comms.sh, these paths are symlinked
+# to your existing ~/shared-comms/ folders automatically.
+polling:
+  interval_seconds: 3
+  mailbox_dir: ../shared/mailbox
+
+# Task settings
+tasks:
+  file: ../tasks.json
+  max_attempts_per_task: 5
+
+# Logging
+logging:
+  file: orchestrator.log
+  level: INFO
+  console: true
+
+# tmux lifecycle management
+tmux:
+  session_name: devqa
+  nudge_prompt: "You have new messages. Use the check_messages MCP tool with your role to read and act on them."
+  nudge_cooldown_seconds: 30
+
+# Agent working directories and pane targets
+# Pane indices match the merged layout: 0=dev (top-left), 1=qa (top-right), 2=orch (bottom)
+agents:
+  dev:
+    working_dir: ~/your-project
+    pane: "orch.0"
+  qa:
+    working_dir: ~/your-project-tests
+    pane: "orch.1"

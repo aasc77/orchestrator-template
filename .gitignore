@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+
+# Runtime
+orchestrator/orchestrator.log
+shared/mailbox/to_dev/*.json
+shared/mailbox/to_qa/*.json
+shared/workspace/*
+!shared/workspace/.gitkeep
+!shared/mailbox/to_dev/.gitkeep
+!shared/mailbox/to_qa/.gitkeep
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store

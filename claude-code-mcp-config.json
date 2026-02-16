@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "agent-bridge": {
+      "command": "node",
+      "args": ["./mcp-bridge/index.js"],
+      "cwd": "REPLACE_WITH_ABSOLUTE_PATH_TO_multi-agent-dev-qa"
+    }
+  }
+}
