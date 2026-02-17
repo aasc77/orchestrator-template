@@ -77,16 +77,13 @@ fi
 
 # ─── Phase 3: Derive project name + key ──────────────────────────────────────
 # Project name: underscored version (e.g., my_app)
-DEFAULT_PROJECT_NAME="${FOLDER_NAME//-/_}"
+PROJECT_NAME="${FOLDER_NAME//-/_}"
 # Project key: hyphenated version (e.g., my-app)
-DEFAULT_PROJECT_KEY="${FOLDER_NAME//_/-}"
+PROJECT_KEY="${FOLDER_NAME//_/-}"
 
 echo ""
-read -r -p "  Project name [${DEFAULT_PROJECT_NAME}]: " PROJECT_NAME
-PROJECT_NAME="${PROJECT_NAME:-$DEFAULT_PROJECT_NAME}"
-
-read -r -p "  Project key  [${DEFAULT_PROJECT_KEY}]: " PROJECT_KEY
-PROJECT_KEY="${PROJECT_KEY:-$DEFAULT_PROJECT_KEY}"
+info "Project name: $PROJECT_NAME"
+info "Project key:  $PROJECT_KEY"
 
 # Validate project key doesn't conflict with existing project
 if [[ -d "$ROOT_DIR/projects/$PROJECT_KEY" ]]; then
