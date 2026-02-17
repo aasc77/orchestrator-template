@@ -71,35 +71,8 @@ DEV_DIR="$REPOS_DIR/$FOLDER_NAME"
 if [[ -d "$DEV_DIR" ]]; then
     info "Dev directory found: $DEV_DIR"
 else
-    warn "Dev directory not found: $DEV_DIR"
-    while true; do
-        echo ""
-        echo "    1) Enter a different path"
-        echo "    2) Create the directory"
-        read -r -p "  Choice [1]: " dev_choice
-        dev_choice="${dev_choice:-1}"
-
-        case "$dev_choice" in
-            1)
-                read -r -p "  Full path to dev directory: " DEV_DIR
-                DEV_DIR="${DEV_DIR/#\~/$HOME}"
-                if [[ -d "$DEV_DIR" ]]; then
-                    info "Dev directory found: $DEV_DIR"
-                    break
-                else
-                    warn "Directory does not exist: $DEV_DIR"
-                fi
-                ;;
-            2)
-                mkdir -p "$DEV_DIR"
-                info "Created dev directory: $DEV_DIR"
-                break
-                ;;
-            *)
-                warn "Invalid choice."
-                ;;
-        esac
-    done
+    mkdir -p "$DEV_DIR"
+    info "Created dev directory: $DEV_DIR"
 fi
 
 # ─── Phase 3: Derive project name + key ──────────────────────────────────────
@@ -129,88 +102,25 @@ echo ""
 if [[ -d "$QA_DIR" ]]; then
     info "QA directory found: $QA_DIR"
 else
-    warn "QA directory not found: $QA_DIR"
-
-    # Build menu options dynamically based on whether dev is a git repo with remote
-    HAS_REMOTE=false
+    # If dev has a git remote, clone it; otherwise create empty
     REMOTE_URL=""
     if [[ -d "$DEV_DIR/.git" ]]; then
         REMOTE_URL=$(git -C "$DEV_DIR" remote get-url origin 2>/dev/null || true)
-        if [[ -n "$REMOTE_URL" ]]; then
-            HAS_REMOTE=true
-        fi
     fi
 
-    while true; do
-        echo ""
-        if $HAS_REMOTE; then
-            echo "    1) Clone from dev's git remote (recommended)"
-            echo "    2) Create empty directory"
-            echo "    3) Enter a different path"
-            read -r -p "  Choice [1]: " qa_choice
-            qa_choice="${qa_choice:-1}"
+    if [[ -n "$REMOTE_URL" ]]; then
+        info "Cloning QA directory from $REMOTE_URL..."
+        if git clone "$REMOTE_URL" "$QA_DIR" 2>/dev/null; then
+            success "Cloned QA directory: $QA_DIR"
         else
-            echo "    1) Create empty directory (recommended)"
-            echo "    2) Enter a different path"
-            read -r -p "  Choice [1]: " qa_choice
-            qa_choice="${qa_choice:-1}"
+            warn "Git clone failed. Creating empty directory instead."
+            mkdir -p "$QA_DIR"
+            info "Created QA directory: $QA_DIR"
         fi
-
-        if $HAS_REMOTE; then
-            case "$qa_choice" in
-                1)
-                    info "Cloning from $REMOTE_URL..."
-                    if git clone "$REMOTE_URL" "$QA_DIR" 2>/dev/null; then
-                        success "Cloned QA directory: $QA_DIR"
-                    else
-                        warn "Git clone failed. Creating empty directory instead."
-                        mkdir -p "$QA_DIR"
-                        success "Created empty QA directory: $QA_DIR"
-                    fi
-                    break
-                    ;;
-                2)
-                    mkdir -p "$QA_DIR"
-                    success "Created empty QA directory: $QA_DIR"
-                    break
-                    ;;
-                3)
-                    read -r -p "  Full path to QA directory: " QA_DIR
-                    QA_DIR="${QA_DIR/#\~/$HOME}"
-                    if [[ -d "$QA_DIR" ]]; then
-                        info "QA directory found: $QA_DIR"
-                        break
-                    else
-                        warn "Directory does not exist: $QA_DIR"
-                    fi
-                    ;;
-                *)
-                    warn "Invalid choice."
-                    ;;
-            esac
-        else
-            case "$qa_choice" in
-                1)
-                    mkdir -p "$QA_DIR"
-                    success "Created empty QA directory: $QA_DIR"
-                    break
-                    ;;
-                2)
-                    read -r -p "  Full path to QA directory: " QA_DIR
-                    QA_DIR="${QA_DIR/#\~/$HOME}"
-                    if [[ -d "$QA_DIR" ]]; then
-                        info "QA directory found: $QA_DIR"
-                        break
-                    else
-                        warn "Directory does not exist: $QA_DIR"
-                    fi
-                    ;;
-                *)
-                    warn "Invalid choice."
-                    ;;
-            esac
-        fi
-    done
+    else
+        mkdir -p "$QA_DIR"
+        info "Created QA directory: $QA_DIR"
+    fi
 fi
 
 # ─── Phase 5: Confirmation summary ───────────────────────────────────────────
