@@ -235,6 +235,7 @@ orchestrator-template/
 │       └── workspace/
 └── docs/
     ├── QUICKSTART.md
+    ├── images/demo.png
     ├── mcp-setup.md
     └── troubleshooting.md
 ```

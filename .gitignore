@@ -7,7 +7,11 @@ __pycache__/
 # Runtime
 orchestrator/orchestrator.log
 
-# Per-project mailbox and workspace (created at runtime)
+# User-created projects (only example/ is tracked)
+projects/*
+!projects/example/
+
+# Runtime (created by start.sh)
 shared/
 
 # Environment
