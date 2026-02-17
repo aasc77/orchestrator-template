@@ -33,21 +33,19 @@ ollama pull qwen3:8b
 # Install MCP bridge dependencies
 echo ""
 echo "Installing MCP bridge dependencies..."
-cd "$PROJECT_DIR/mcp-bridge"
-npm install
+npm install --prefix "$PROJECT_DIR/mcp-bridge"
 
 # Install orchestrator dependencies
 echo ""
 echo "Installing orchestrator dependencies..."
-cd "$PROJECT_DIR/orchestrator"
-pip install -r requirements.txt --break-system-packages 2>/dev/null || pip install -r requirements.txt
+pip install -r "$PROJECT_DIR/orchestrator/requirements.txt" --break-system-packages 2>/dev/null || pip install -r "$PROJECT_DIR/orchestrator/requirements.txt"
 
 # Update MCP config with actual path
 echo ""
 echo "Configuring MCP bridge..."
 MCP_CONFIG="$PROJECT_DIR/claude-code-mcp-config.json"
 if grep -q "REPLACE_WITH_ABSOLUTE_PATH" "$MCP_CONFIG" 2>/dev/null; then
-    sed "s|REPLACE_WITH_ABSOLUTE_PATH_TO_ORCHESTRATOR|$PROJECT_DIR|g" "$MCP_CONFIG" > "$MCP_CONFIG.tmp" && mv "$MCP_CONFIG.tmp" "$MCP_CONFIG"
+    sed -i '' "s|REPLACE_WITH_ABSOLUTE_PATH_TO_ORCHESTRATOR|$PROJECT_DIR|g" "$MCP_CONFIG"
     echo "  MCP config updated with absolute path"
 fi
 
@@ -58,8 +56,7 @@ cat "$MCP_CONFIG"
 # Test MCP bridge
 echo ""
 echo "Testing MCP bridge..."
-cd "$PROJECT_DIR/mcp-bridge"
-node test.js
+node "$PROJECT_DIR/mcp-bridge/test.js"
 
 echo ""
 echo "Setup complete!"

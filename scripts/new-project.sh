@@ -34,7 +34,7 @@ cleanup() {
     fi
 }
 
-trap cleanup INT TERM
+trap cleanup INT TERM ERR
 
 # ─── Header ───────────────────────────────────────────────────────────────────
 echo ""
@@ -189,7 +189,6 @@ info "Created projects/$PROJECT_KEY/config.yaml"
 cat > "$PROJECT_DIR/tasks.json" <<EOF
 {
   "project": "$PROJECT_NAME",
-  "workspace": "./shared/workspace",
   "tasks": [
     {
       "id": "smoke-1",

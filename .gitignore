@@ -10,9 +10,6 @@ orchestrator/orchestrator.log
 # Per-project mailbox and workspace (created at runtime)
 shared/
 
-# Keep gitkeep files
-!**/.gitkeep
-
 # Environment
 .env
 .env.*
