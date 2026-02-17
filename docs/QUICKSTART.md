@@ -20,9 +20,7 @@ ollama serve
 ## 2. Clone and Run Setup
 
 ```bash
-git clone <this-repo> my-orchestrator
-cd my-orchestrator
-./scripts/setup.sh
+git clone <this-repo> my-orchestrator && cd my-orchestrator && ./scripts/setup.sh
 ```
 
 Setup will:

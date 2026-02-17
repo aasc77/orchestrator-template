@@ -55,10 +55,8 @@ Supports multiple projects from a single installation.
 > For a detailed walkthrough with configuration examples and troubleshooting, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ```bash
-# 1. Clone and install the orchestrator
-git clone <this-repo> my-orchestrator
-cd my-orchestrator
-./scripts/setup.sh
+# 1. Clone and install
+git clone <this-repo> my-orchestrator && cd my-orchestrator && ./scripts/setup.sh
 
 # 2. Create a project (interactive wizard)
 ./scripts/new-project.sh
