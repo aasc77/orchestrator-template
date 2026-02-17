@@ -50,6 +50,8 @@ Supports multiple projects from a single installation.
 
 ## Quick Start
 
+> For a detailed walkthrough with configuration examples and troubleshooting, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
 ```bash
 # 1. Clone and install
 git clone <this-repo> my-orchestrator
