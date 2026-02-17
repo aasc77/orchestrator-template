@@ -55,34 +55,50 @@ Supports multiple projects from a single installation.
 > For a detailed walkthrough with configuration examples and troubleshooting, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ```bash
-# 1. Clone and install
+# 1. Set up working directories for your agents
+cd ~/Repositories
+git clone git@github.com:yourorg/my-app.git            # Dev's copy
+git clone git@github.com:yourorg/my-app.git my-app-qa   # QA's copy
+
+# 2. Clone and install the orchestrator
 git clone <this-repo> my-orchestrator
 cd my-orchestrator
 ./scripts/setup.sh
 
-# 2. Create your project from the example
+# 3. Create your project from the example
 cp -r projects/example projects/myproject
 
-# 3. Configure
+# 4. Configure
 vi projects/myproject/config.yaml          # Set working dirs, session name
 vi projects/myproject/tasks.json           # Define your tasks
 vi projects/myproject/agents/dev/CLAUDE.md # Add project context for Dev
 vi projects/myproject/agents/qa/CLAUDE.md  # Add test environment for QA
 
-# 4. Launch
+# 5. Launch
 ./scripts/start.sh myproject
 
-# 5. Stop
+# 6. Launch (no confirmation prompts -- agents run fully autonomously)
+./scripts/start.sh myproject --yolo
+
+# 7. Stop
 ./scripts/stop.sh myproject
 ```
+
+**Why two working directories?** Dev and QA run as separate Claude Code sessions. Separate directories prevent them from interfering with each other. They communicate through the MCP mailbox, not the filesystem. You can use one directory for both if you prefer, but simultaneous edits may conflict.
 
 ## Adding a New Project
 
 ```bash
+# 1. Set up working directories
+cd ~/Repositories
+git clone git@github.com:yourorg/new-project.git              # Dev's copy
+git clone git@github.com:yourorg/new-project.git new-project-qa  # QA's copy
+
+# 2. Create project config
 cp -r projects/example projects/<name>
 ```
 
-Edit `projects/<name>/config.yaml`:
+Edit `projects/<name>/config.yaml` to point at your working directories:
 
 ```yaml
 project: my_new_project
@@ -90,10 +106,10 @@ tmux:
   session_name: mynewproject
 agents:
   dev:
-    working_dir: ~/Repositories/my-new-project
+    working_dir: ~/Repositories/new-project       # Dev's repo clone
     pane: orch.0
   qa:
-    working_dir: ~/Repositories/my-new-project-qa
+    working_dir: ~/Repositories/new-project-qa    # QA's repo clone
     pane: orch.1
 ```
 
