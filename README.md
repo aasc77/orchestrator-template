@@ -39,6 +39,15 @@ Supports multiple projects from a single installation.
    - **STUCK** (5+ attempts) -> flags for human review
 8. Loop until all tasks complete
 
+## Prerequisites
+
+- macOS (tested on Apple Silicon)
+- [tmux](https://github.com/tmux/tmux) -- `brew install tmux`
+- [Node.js](https://nodejs.org/) -- `brew install node`
+- [Python 3](https://www.python.org/) -- `brew install python3`
+- [Claude Code](https://claude.com/claude-code) -- `npm install -g @anthropic-ai/claude-code`
+- [Ollama](https://ollama.ai/) -- `brew install ollama` (+ `ollama pull qwen3:8b`)
+
 ## Quick Start
 
 ```bash
@@ -175,12 +184,3 @@ While the orchestrator is running, type commands in the ORCH pane:
 | `help` | Show all commands |
 
 You can also type natural language -- the orchestrator's LLM will interpret it.
-
-## Prerequisites
-
-- macOS (tested on Apple Silicon)
-- [tmux](https://github.com/tmux/tmux) -- `brew install tmux`
-- [Node.js](https://nodejs.org/) -- `brew install node`
-- [Python 3](https://www.python.org/) -- `brew install python3`
-- [Claude Code](https://claude.com/claude-code) -- `npm install -g @anthropic-ai/claude-code`
-- [Ollama](https://ollama.ai/) -- `brew install ollama` (+ `ollama pull qwen3:8b`)
