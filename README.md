@@ -114,7 +114,7 @@ vi projects/myproject/agents/qa/CLAUDE.md  # Add test environment for QA
 ## Adding a New Project
 
 ```bash
-./scripts/new-project.sh
+my-orchestrator/scripts/new-project.sh
 ```
 
 The wizard handles everything: locates your dev repo, creates the QA directory (clone or empty), and generates `config.yaml`, `tasks.json`, and agent `CLAUDE.md` files with correct pane values and smoke-test tasks.
@@ -122,13 +122,13 @@ The wizard handles everything: locates your dev repo, creates the QA directory (
 Pass the folder name as an argument to skip the first prompt:
 
 ```bash
-./scripts/new-project.sh my-app
+my-orchestrator/scripts/new-project.sh my-app
 ```
 
 After the wizard finishes, customize the generated files:
 1. Replace smoke-test tasks in `projects/<name>/tasks.json` with your real work
 2. Fill in the `<!-- TODO -->` placeholders in `projects/<name>/agents/dev/CLAUDE.md` and `qa/CLAUDE.md`
-3. Launch with `./scripts/start.sh <name>`
+3. Launch with `my-orchestrator/scripts/start.sh <name>`
 
 Multiple projects can run simultaneously (each gets its own tmux session and mailbox).
 
@@ -192,7 +192,7 @@ Define tasks with:
 - `status`: `pending`, `in_progress`, `completed`, or `stuck`
 
 ### Agent Instructions (`projects/<name>/agents/{dev,qa}/CLAUDE.md`)
-Customize with project-specific context:
+These files are injected into each agent's system prompt at launch via `--append-system-prompt`. Customize with project-specific context:
 - Tech stack, architecture, key URLs
 - Test credentials and environment details
 - Known bugs and deployment instructions
@@ -227,6 +227,8 @@ orchestrator-template/
 │   └── stop.sh <project>            # Stop a project session
 ├── shared/                          # Created at runtime per project
 │   └── <project>/
+│       ├── launch-dev.sh           # Generated agent launcher
+│       ├── launch-qa.sh            # Generated agent launcher
 │       ├── mailbox/
 │       │   ├── to_dev/
 │       │   └── to_qa/

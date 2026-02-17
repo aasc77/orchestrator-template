@@ -65,7 +65,15 @@ projects/my-app/
 
 It also creates the shared mailbox and workspace directories at `shared/my-app/`.
 
-**Why two directories?** Dev and QA run as separate Claude Code sessions. Giving them separate directories prevents them from interfering with each other (e.g., Dev editing a file while QA is reading it). They communicate through a shared MCP mailbox, not through the filesystem. The wizard handles creating the QA directory for you.
+**Where things live:** Each project has files in three places:
+
+| Location | What | Purpose |
+|----------|------|---------|
+| `~/Repositories/my-app/` | Your code (Dev's copy) | Where the Dev agent writes code |
+| `~/Repositories/my-app_qa/` | Your code (QA's copy) | Where the QA agent tests (separate to avoid conflicts) |
+| `my-orchestrator/projects/my-app/` | Orchestrator config | Tasks, agent instructions, session settings |
+
+The `shared/my-app/` directory is created at runtime for the mailbox (how agents communicate) and workspace (shared files).
 
 <details>
 <summary>Manual setup (without wizard)</summary>
@@ -122,7 +130,7 @@ Tips for writing good tasks:
 
 ### Agent CLAUDE.md Files
 
-Fill in the `<!-- TODO -->` placeholders the wizard left in each file.
+These files are injected into each agent's system prompt when the session launches. The more context you add, the better the agents perform. Fill in the `<!-- TODO -->` placeholders the wizard left in each file.
 
 **`agents/dev/CLAUDE.md`** -- Add under "Project Context":
 ```markdown
