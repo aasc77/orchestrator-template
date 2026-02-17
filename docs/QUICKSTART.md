@@ -20,7 +20,8 @@ ollama serve
 ## 2. Clone and Run Setup
 
 ```bash
-git clone https://github.com/aasc77/orchestrator-template.git my-orchestrator && cd my-orchestrator && ./scripts/setup.sh
+git clone https://github.com/aasc77/orchestrator-template.git my-orchestrator
+my-orchestrator/scripts/setup.sh
 ```
 
 Setup will:
@@ -30,10 +31,11 @@ Setup will:
 - Install Python dependencies for the orchestrator
 - Configure the MCP bridge with the correct absolute path
 - Run a quick self-test to verify the bridge works
+- **Prompt to create your first project** (runs the wizard automatically)
 
 ## 3. Create Your Project
 
-Run the interactive wizard:
+Setup prompts you to create a project at the end. If you skipped it, run the wizard manually:
 
 ```bash
 ./scripts/new-project.sh

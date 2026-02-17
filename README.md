@@ -55,25 +55,24 @@ Supports multiple projects from a single installation.
 > For a detailed walkthrough with configuration examples and troubleshooting, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ```bash
-# 1. Clone and install
-git clone https://github.com/aasc77/orchestrator-template.git my-orchestrator && cd my-orchestrator && ./scripts/setup.sh
+# 1. Clone and install (setup will prompt to create a project)
+git clone https://github.com/aasc77/orchestrator-template.git my-orchestrator
+my-orchestrator/scripts/setup.sh
 
-# 2. Create a project (interactive wizard)
-./scripts/new-project.sh
+# 2. Customize tasks and agent instructions
+cd my-orchestrator
+vi projects/<name>/tasks.json
+vi projects/<name>/agents/dev/CLAUDE.md
+vi projects/<name>/agents/qa/CLAUDE.md
 
-# 3. Customize tasks and agent instructions
-vi projects/myproject/tasks.json
-vi projects/myproject/agents/dev/CLAUDE.md
-vi projects/myproject/agents/qa/CLAUDE.md
+# 3. Launch
+./scripts/start.sh <name>
 
-# 4. Launch
-./scripts/start.sh myproject
+# 4. Launch (no confirmation prompts -- agents run fully autonomously)
+./scripts/start.sh <name> --yolo
 
-# 5. Launch (no confirmation prompts -- agents run fully autonomously)
-./scripts/start.sh myproject --yolo
-
-# 6. Stop
-./scripts/stop.sh myproject
+# 5. Stop
+./scripts/stop.sh <name>
 ```
 
 <details>

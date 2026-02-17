@@ -64,14 +64,24 @@ node test.js
 echo ""
 echo "Setup complete!"
 echo ""
-echo "Next steps:"
-echo "  1. Create a project:"
-echo "     ./scripts/new-project.sh"
-echo ""
-echo "  2. Customize tasks and agent instructions:"
-echo "     vi projects/<name>/tasks.json"
-echo "     vi projects/<name>/agents/dev/CLAUDE.md"
-echo "     vi projects/<name>/agents/qa/CLAUDE.md"
-echo ""
-echo "  3. Launch:"
-echo "     ./scripts/start.sh <name>"
+
+# Offer to run the project wizard
+read -r -p "Create a project now? [Y/n]: " CREATE_PROJECT
+CREATE_PROJECT="${CREATE_PROJECT:-Y}"
+
+if [[ "$CREATE_PROJECT" =~ ^[Yy]$ ]]; then
+    exec "$PROJECT_DIR/scripts/new-project.sh"
+else
+    echo ""
+    echo "Next steps:"
+    echo "  1. Create a project:"
+    echo "     ./scripts/new-project.sh"
+    echo ""
+    echo "  2. Customize tasks and agent instructions:"
+    echo "     vi projects/<name>/tasks.json"
+    echo "     vi projects/<name>/agents/dev/CLAUDE.md"
+    echo "     vi projects/<name>/agents/qa/CLAUDE.md"
+    echo ""
+    echo "  3. Launch:"
+    echo "     ./scripts/start.sh <name>"
+fi
