@@ -240,7 +240,7 @@ echo "  Ctrl-b q       - Show pane numbers"
 echo "  Ctrl-b o       - Cycle to next pane"
 echo "  Ctrl-b ;       - Toggle last active pane"
 echo "  Ctrl-b d       - Detach (session keeps running)"
-echo "  ./scripts/stop.sh $PROJECT - Graceful shutdown"
+echo "  $PROJECT_DIR/scripts/stop.sh $PROJECT - Graceful shutdown"
 echo "================================"
 echo ""
 
