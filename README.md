@@ -55,38 +55,70 @@ Supports multiple projects from a single installation.
 > For a detailed walkthrough with configuration examples and troubleshooting, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ```bash
+# 1. Clone and install the orchestrator
+git clone <this-repo> my-orchestrator
+cd my-orchestrator
+./scripts/setup.sh
+
+# 2. Create a project (interactive wizard)
+./scripts/new-project.sh
+
+# 3. Customize tasks and agent instructions
+vi projects/myproject/tasks.json
+vi projects/myproject/agents/dev/CLAUDE.md
+vi projects/myproject/agents/qa/CLAUDE.md
+
+# 4. Launch
+./scripts/start.sh myproject
+
+# 5. Launch (no confirmation prompts -- agents run fully autonomously)
+./scripts/start.sh myproject --yolo
+
+# 6. Stop
+./scripts/stop.sh myproject
+```
+
+<details>
+<summary>Manual setup (without wizard)</summary>
+
+```bash
 # 1. Set up working directories for your agents
 cd ~/Repositories
 git clone git@github.com:yourorg/my-app.git            # Dev's copy
 git clone git@github.com:yourorg/my-app.git my-app-qa   # QA's copy
 
-# 2. Clone and install the orchestrator
-git clone <this-repo> my-orchestrator
-cd my-orchestrator
-./scripts/setup.sh
-
-# 3. Create your project from the example
+# 2. Create your project from the example
 cp -r projects/example projects/myproject
 
-# 4. Configure
+# 3. Configure
 vi projects/myproject/config.yaml          # Set working dirs, session name
 vi projects/myproject/tasks.json           # Define your tasks
 vi projects/myproject/agents/dev/CLAUDE.md # Add project context for Dev
 vi projects/myproject/agents/qa/CLAUDE.md  # Add test environment for QA
-
-# 5. Launch
-./scripts/start.sh myproject
-
-# 6. Launch (no confirmation prompts -- agents run fully autonomously)
-./scripts/start.sh myproject --yolo
-
-# 7. Stop
-./scripts/stop.sh myproject
 ```
+
+</details>
 
 **Why two working directories?** Dev and QA run as separate Claude Code sessions. Separate directories prevent them from interfering with each other. They communicate through the MCP mailbox, not the filesystem. You can use one directory for both if you prefer, but simultaneous edits may conflict.
 
 ## Adding a New Project
+
+The fastest way to add a project is the interactive wizard:
+
+```bash
+./scripts/new-project.sh
+```
+
+It asks for the folder name in `~/Repositories/`, derives sensible defaults, handles QA directory creation (clone or empty), and generates all config files with correct pane values and smoke-test tasks.
+
+You can also pass the folder name as an argument to skip the first prompt:
+
+```bash
+./scripts/new-project.sh my-app
+```
+
+<details>
+<summary>Manual setup (without wizard)</summary>
 
 ```bash
 # 1. Set up working directories
@@ -97,6 +129,8 @@ git clone git@github.com:yourorg/new-project.git new-project-qa  # QA's copy
 # 2. Create project config
 cp -r projects/example projects/<name>
 ```
+
+</details>
 
 Edit `projects/<name>/config.yaml` to point at your working directories:
 
@@ -175,6 +209,7 @@ orchestrator-template/
 │   └── test.js
 ├── scripts/
 │   ├── setup.sh                     # One-time install
+│   ├── new-project.sh               # Interactive project setup wizard
 │   ├── start.sh <project>           # Launch a project session
 │   └── stop.sh <project>            # Stop a project session
 ├── shared/                          # Created at runtime per project

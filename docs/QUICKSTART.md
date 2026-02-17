@@ -50,6 +50,16 @@ Setup will:
 
 ## 4. Create Your Project
 
+**Option A: Interactive wizard (recommended)**
+
+```bash
+./scripts/new-project.sh
+```
+
+The wizard asks for the folder name in `~/Repositories/`, locates (or creates) Dev and QA directories, and generates all project files with correct paths and smoke-test tasks. Skip to step 5 after customizing the generated files.
+
+**Option B: Manual copy**
+
 ```bash
 cp -r projects/example projects/myproject
 ```
