@@ -7,13 +7,13 @@ shared tools for communication: `send_to_qa`, `send_to_dev`, `check_messages`,
 `list_workspace`, and `read_workspace_file`.
 
 It uses a file-based mailbox system — messages are JSON files written to
-`shared/mailbox/to_dev/` and `shared/mailbox/to_qa/`.
+`shared/<project>/mailbox/to_dev/` and `shared/<project>/mailbox/to_qa/`.
 
 ## Adding MCP to Claude Code
 
 ### Option 1: CLI (Recommended)
 ```bash
-claude mcp add agent-bridge node /path/to/multi-agent-dev-qa/mcp-bridge/index.js
+claude mcp add agent-bridge node /path/to/my-orchestrator/mcp-bridge/index.js
 ```
 
 ### Option 2: Config File
@@ -23,7 +23,7 @@ Add to `~/.claude/claude_code_config.json`:
   "mcpServers": {
     "agent-bridge": {
       "command": "node",
-      "args": ["/absolute/path/to/multi-agent-dev-qa/mcp-bridge/index.js"]
+      "args": ["/absolute/path/to/my-orchestrator/mcp-bridge/index.js"]
     }
   }
 }
@@ -31,7 +31,7 @@ Add to `~/.claude/claude_code_config.json`:
 
 ### Option 3: Per-session flag
 ```bash
-claude --mcp-config /path/to/multi-agent-dev-qa/claude-code-mcp-config.json
+claude --mcp-config /path/to/my-orchestrator/claude-code-mcp-config.json
 ```
 
 ## Verifying It Works
@@ -44,4 +44,4 @@ claude --mcp-config /path/to/multi-agent-dev-qa/claude-code-mcp-config.json
 
 - **"No MCP tools found"**: Check the path in your config is absolute and correct
 - **"Cannot find module"**: Run `npm install` in the mcp-bridge/ directory
-- **Messages not appearing**: Check permissions on shared/mailbox/ directories
+- **Messages not appearing**: Check permissions on shared/<project>/mailbox/ directories

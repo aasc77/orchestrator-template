@@ -25,17 +25,12 @@ ollama pull qwen3:8b
 
 3. Check for messages manually:
    ```bash
-   ls shared/mailbox/to_dev/    # Messages waiting for Dev
-   ls shared/mailbox/to_qa/     # Messages waiting for QA
-   cat shared/mailbox/to_dev/*.json
+   ls shared/<project>/mailbox/to_dev/    # Messages waiting for Dev
+   ls shared/<project>/mailbox/to_qa/     # Messages waiting for QA
+   cat shared/<project>/mailbox/to_dev/*.json
    ```
 
-4. If using symlinks (migrate-comms.sh), verify they're valid:
-   ```bash
-   ls -la shared/mailbox/
-   ```
-
-5. Tell the agent: "Use check_messages with role dev" (or qa)
+4. Tell the agent: "Use check_messages with role dev" (or qa)
 
 ## Orchestrator ignores its own messages
 
