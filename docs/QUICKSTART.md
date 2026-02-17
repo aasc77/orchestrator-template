@@ -57,21 +57,21 @@ The wizard will:
 ```
 projects/my-app/
 ├── config.yaml              # Working dirs, session name, pane targets
-├── tasks.json               # Two smoke-test tasks (ready to run)
-└── agents/
-    ├── dev/CLAUDE.md        # Dev agent instructions (with TODO placeholder)
-    └── qa/CLAUDE.md         # QA agent instructions (with TODO placeholder)
+└── tasks.json               # Two smoke-test tasks (ready to run)
+
+~/Repositories/my-app/CLAUDE.md      # Dev agent instructions
+~/Repositories/my-app_qa/CLAUDE.md   # QA agent instructions
 ```
 
 It also creates the shared mailbox and workspace directories at `shared/my-app/`.
 
-**Where things live:** Each project has files in three places:
+**Where things live:** Each project has files in two places:
 
 | Location | What | Purpose |
 |----------|------|---------|
-| `~/Repositories/my-app/` | Your code (Dev's copy) | Where the Dev agent writes code |
-| `~/Repositories/my-app_qa/` | Your code (QA's copy) | Where the QA agent tests (separate to avoid conflicts) |
-| `my-orchestrator/projects/my-app/` | Orchestrator config | Tasks, agent instructions, session settings |
+| `~/Repositories/my-app/` | Your code + `CLAUDE.md` | Where the Dev agent works (CLAUDE.md is picked up automatically) |
+| `~/Repositories/my-app_qa/` | Your code + `CLAUDE.md` | Where the QA agent works (CLAUDE.md is picked up automatically) |
+| `my-orchestrator/projects/my-app/` | Orchestrator config | Tasks and session settings |
 
 The `shared/my-app/` directory is created at runtime for the mailbox (how agents communicate) and workspace (shared files).
 
@@ -130,9 +130,9 @@ Tips for writing good tasks:
 
 ### Agent CLAUDE.md Files
 
-These files are injected into each agent's system prompt when the session launches. The more context you add, the better the agents perform. Fill in the `<!-- TODO -->` placeholders the wizard left in each file.
+The wizard creates a `CLAUDE.md` in each working directory. Claude Code picks these up automatically -- both when launched by the orchestrator and when you run `claude` standalone. The more context you add, the better the agents perform. Fill in the `<!-- TODO -->` placeholders the wizard left in each file.
 
-**`agents/dev/CLAUDE.md`** -- Add under "Project Context":
+**`~/Repositories/my-app/CLAUDE.md`** (Dev) -- Add under "Project Context":
 ```markdown
 ## Project Context
 
@@ -143,7 +143,7 @@ These files are injected into each agent's system prompt when the session launch
 - Existing patterns: see routes/users.js for reference
 ```
 
-**`agents/qa/CLAUDE.md`** -- Add under "Test Environment":
+**`~/Repositories/my-app_qa/CLAUDE.md`** (QA) -- Add under "Test Environment":
 ```markdown
 ## Test Environment
 

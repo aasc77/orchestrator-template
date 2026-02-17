@@ -64,10 +64,9 @@ my-orchestrator/scripts/setup.sh
 **2. Customize tasks and agent instructions:**
 
 ```bash
-cd my-orchestrator
-vi projects/<name>/tasks.json
-vi projects/<name>/agents/dev/CLAUDE.md
-vi projects/<name>/agents/qa/CLAUDE.md
+vi my-orchestrator/projects/<name>/tasks.json
+vi ~/Repositories/<name>/CLAUDE.md
+vi ~/Repositories/<name>_qa/CLAUDE.md
 ```
 
 **3. Launch:**
@@ -103,8 +102,8 @@ cp -r projects/example projects/myproject
 # 3. Configure
 vi projects/myproject/config.yaml          # Set working dirs, session name
 vi projects/myproject/tasks.json           # Define your tasks
-vi projects/myproject/agents/dev/CLAUDE.md # Add project context for Dev
-vi projects/myproject/agents/qa/CLAUDE.md  # Add test environment for QA
+vi ~/Repositories/my-app/CLAUDE.md         # Add project context for Dev
+vi ~/Repositories/my-app-qa/CLAUDE.md      # Add test environment for QA
 ```
 
 </details>
@@ -127,7 +126,7 @@ my-orchestrator/scripts/new-project.sh my-app
 
 After the wizard finishes, customize the generated files:
 1. Replace smoke-test tasks in `projects/<name>/tasks.json` with your real work
-2. Fill in the `<!-- TODO -->` placeholders in `projects/<name>/agents/dev/CLAUDE.md` and `qa/CLAUDE.md`
+2. Fill in the `<!-- TODO -->` placeholders in `CLAUDE.md` in each working directory
 3. Launch with `my-orchestrator/scripts/start.sh <name>`
 
 Multiple projects can run simultaneously (each gets its own tmux session and mailbox).
@@ -191,8 +190,8 @@ Define tasks with:
 - `acceptance_criteria`: Measurable outcomes QA will verify
 - `status`: `pending`, `in_progress`, `completed`, or `stuck`
 
-### Agent Instructions (`projects/<name>/agents/{dev,qa}/CLAUDE.md`)
-These files are injected into each agent's system prompt at launch via `--append-system-prompt`. Customize with project-specific context:
+### Agent Instructions (`CLAUDE.md` in working directories)
+The wizard creates a `CLAUDE.md` in each agent's working directory (e.g., `~/Repositories/my-app/CLAUDE.md` for Dev, `~/Repositories/my-app_qa/CLAUDE.md` for QA). Claude Code picks these up automatically -- both when launched by the orchestrator and when you run `claude` standalone. Customize with:
 - Tech stack, architecture, key URLs
 - Test credentials and environment details
 - Known bugs and deployment instructions
@@ -206,10 +205,7 @@ orchestrator-template/
 ├── projects/
 │   └── example/                     # Template project (copy to create new)
 │       ├── config.yaml              # Project config (session, working dirs)
-│       ├── tasks.json               # Task queue
-│       └── agents/
-│           ├── dev/CLAUDE.md        # Dev agent instructions
-│           └── qa/CLAUDE.md         # QA agent instructions
+│       └── tasks.json               # Task queue
 ├── orchestrator/
 │   ├── orchestrator.py              # Main loop (polls mailbox, asks LLM)
 │   ├── llm_client.py                # Ollama API client
@@ -227,8 +223,6 @@ orchestrator-template/
 │   └── stop.sh <project>            # Stop a project session
 ├── shared/                          # Created at runtime per project
 │   └── <project>/
-│       ├── launch-dev.sh           # Generated agent launcher
-│       ├── launch-qa.sh            # Generated agent launcher
 │       ├── mailbox/
 │       │   ├── to_dev/
 │       │   └── to_qa/

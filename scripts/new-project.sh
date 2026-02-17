@@ -139,8 +139,8 @@ echo ""
 echo "  Will create:"
 echo "    projects/$PROJECT_KEY/config.yaml"
 echo "    projects/$PROJECT_KEY/tasks.json"
-echo "    projects/$PROJECT_KEY/agents/dev/CLAUDE.md"
-echo "    projects/$PROJECT_KEY/agents/qa/CLAUDE.md"
+echo "    $DEV_DIR/CLAUDE.md"
+echo "    $QA_DIR/CLAUDE.md"
 echo "    shared/$PROJECT_KEY/mailbox/{to_dev,to_qa}/"
 echo "    shared/$PROJECT_KEY/workspace/"
 echo "  ${BOLD}=================================${RESET}"
@@ -161,8 +161,7 @@ CLEANUP_PROJECT_DIR="$PROJECT_DIR"
 CLEANUP_SHARED_DIR="$SHARED_DIR"
 
 # Create directory structure
-mkdir -p "$PROJECT_DIR/agents/dev"
-mkdir -p "$PROJECT_DIR/agents/qa"
+mkdir -p "$PROJECT_DIR"
 mkdir -p "$SHARED_DIR/mailbox/to_dev"
 mkdir -p "$SHARED_DIR/mailbox/to_qa"
 mkdir -p "$SHARED_DIR/workspace"
@@ -221,8 +220,8 @@ cat > "$PROJECT_DIR/tasks.json" <<EOF
 EOF
 info "Created projects/$PROJECT_KEY/tasks.json"
 
-# --- agents/dev/CLAUDE.md ---
-cat > "$PROJECT_DIR/agents/dev/CLAUDE.md" <<'DEVEOF'
+# --- Dev CLAUDE.md (written to dev working directory) ---
+cat > "$DEV_DIR/CLAUDE.md" <<'DEVEOF'
 # Dev Agent
 
 You are the **DEVELOPER** agent in an automated Dev/QA workflow with an AI orchestrator.
@@ -273,11 +272,11 @@ You have these tools from the `agent-bridge` MCP server:
 DEVEOF
 
 # Substitute project name into the header
-sed -i '' "s/^# Dev Agent$/# Dev Agent -- $PROJECT_NAME/" "$PROJECT_DIR/agents/dev/CLAUDE.md"
-info "Created projects/$PROJECT_KEY/agents/dev/CLAUDE.md"
+sed -i '' "s/^# Dev Agent$/# Dev Agent -- $PROJECT_NAME/" "$DEV_DIR/CLAUDE.md"
+info "Created $DEV_DIR/CLAUDE.md"
 
-# --- agents/qa/CLAUDE.md ---
-cat > "$PROJECT_DIR/agents/qa/CLAUDE.md" <<'QAEOF'
+# --- QA CLAUDE.md (written to QA working directory) ---
+cat > "$QA_DIR/CLAUDE.md" <<'QAEOF'
 # QA Agent -- Black-Box Testing
 
 You are the **QA Agent** in an automated Dev/QA workflow with an AI orchestrator.
@@ -354,8 +353,8 @@ For each bug in the `bugs` array:
 QAEOF
 
 # Substitute project name into the header
-sed -i '' "s/^# QA Agent -- Black-Box Testing$/# QA Agent -- $PROJECT_NAME/" "$PROJECT_DIR/agents/qa/CLAUDE.md"
-info "Created projects/$PROJECT_KEY/agents/qa/CLAUDE.md"
+sed -i '' "s/^# QA Agent -- Black-Box Testing$/# QA Agent -- $PROJECT_NAME/" "$QA_DIR/CLAUDE.md"
+info "Created $QA_DIR/CLAUDE.md"
 
 # Clear cleanup markers on success
 CLEANUP_PROJECT_DIR=""
@@ -369,8 +368,8 @@ success "Done!"
 echo ""
 echo "  ${BOLD}Next steps:${RESET}"
 echo "    1. Edit tasks:    ${DIM}vi $ROOT_DIR/projects/$PROJECT_KEY/tasks.json${RESET}"
-echo "    2. Customize Dev: ${DIM}vi $ROOT_DIR/projects/$PROJECT_KEY/agents/dev/CLAUDE.md${RESET}"
-echo "    3. Customize QA:  ${DIM}vi $ROOT_DIR/projects/$PROJECT_KEY/agents/qa/CLAUDE.md${RESET}"
+echo "    2. Customize Dev: ${DIM}vi $DEV_DIR/CLAUDE.md${RESET}"
+echo "    3. Customize QA:  ${DIM}vi $QA_DIR/CLAUDE.md${RESET}"
 echo "    4. Launch:        ${DIM}$ROOT_DIR/scripts/start.sh $PROJECT_KEY${RESET}"
 echo "    5. Launch (auto): ${DIM}$ROOT_DIR/scripts/start.sh $PROJECT_KEY --yolo${RESET}"
 echo ""
