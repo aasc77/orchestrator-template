@@ -38,13 +38,13 @@ Setup will:
 Setup prompts you to create a project at the end. If you skipped it, run the wizard manually:
 
 ```bash
-./scripts/new-project.sh
+my-orchestrator/scripts/new-project.sh
 ```
 
 Or pass the folder name directly:
 
 ```bash
-./scripts/new-project.sh my-app
+my-orchestrator/scripts/new-project.sh my-app
 ```
 
 The wizard will:
@@ -150,13 +150,13 @@ The more context you provide, the better the agents perform.
 ## 5. Launch
 
 ```bash
-./scripts/start.sh myproject
+my-orchestrator/scripts/start.sh myproject
 ```
 
 To skip all Claude Code confirmation prompts (agents run fully autonomously):
 
 ```bash
-./scripts/start.sh myproject --yolo
+my-orchestrator/scripts/start.sh myproject --yolo
 ```
 
 You'll see pre-flight checks, then a tmux session with three panes:
@@ -232,7 +232,7 @@ tmux attach -t myproject
 ## 7. Stop
 
 ```bash
-./scripts/stop.sh myproject
+my-orchestrator/scripts/stop.sh myproject
 ```
 
 This sends `/exit` to both Claude Code agents, stops the orchestrator, and kills the tmux session.
