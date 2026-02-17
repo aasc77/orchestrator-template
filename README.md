@@ -56,7 +56,7 @@ Supports multiple projects from a single installation.
 
 ```bash
 # 1. Clone and install
-git clone <this-repo> my-orchestrator && cd my-orchestrator && ./scripts/setup.sh
+git clone https://github.com/aasc77/orchestrator-template.git my-orchestrator && cd my-orchestrator && ./scripts/setup.sh
 
 # 2. Create a project (interactive wizard)
 ./scripts/new-project.sh
@@ -220,6 +220,7 @@ orchestrator-template/
 │       │   └── to_qa/
 │       └── workspace/
 └── docs/
+    ├── QUICKSTART.md
     ├── mcp-setup.md
     └── troubleshooting.md
 ```

@@ -20,7 +20,7 @@ ollama serve
 ## 2. Clone and Run Setup
 
 ```bash
-git clone <this-repo> my-orchestrator && cd my-orchestrator && ./scripts/setup.sh
+git clone https://github.com/aasc77/orchestrator-template.git my-orchestrator && cd my-orchestrator && ./scripts/setup.sh
 ```
 
 Setup will:
@@ -48,7 +48,7 @@ Or pass the folder name directly:
 The wizard will:
 1. Ask for the folder name in `~/Repositories/` (your dev repo)
 2. Derive a project name and key (with option to override)
-3. Locate or create the QA directory (clone from dev's git remote, create empty, or enter a custom path)
+3. Auto-create the QA directory (clones from dev's git remote if available, otherwise creates an empty directory)
 4. Show a summary and ask for confirmation
 5. Generate all project files:
 
