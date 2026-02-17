@@ -1,7 +1,11 @@
 #!/bin/bash
 set -e
 
-PROJECT=${1:?"Usage: ./scripts/start.sh <project>  (e.g., example)"}
+PROJECT=${1:?"Usage: ./scripts/start.sh <project> [--yolo]  (e.g., example)"}
+YOLO_FLAG=""
+if [[ "${2:-}" == "--yolo" ]]; then
+    YOLO_FLAG="--dangerously-skip-permissions"
+fi
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_CONFIG="$PROJECT_DIR/projects/$PROJECT/config.yaml"
@@ -22,8 +26,12 @@ QA_DIR=$(python3 -c "import yaml; print(yaml.safe_load(open('$PROJECT_CONFIG'))[
 PROJECT_NAME=$(python3 -c "import yaml; print(yaml.safe_load(open('$PROJECT_CONFIG'))['project'])")
 
 # System prompts for agents
-DEV_PROMPT="You are the Dev agent for project '$PROJECT_NAME'. Check your messages using the check_messages MCP tool with role 'dev' to get your task assignment. Follow the instructions in your CLAUDE.md."
-QA_PROMPT="You are the QA agent for project '$PROJECT_NAME'. Check your messages using the check_messages MCP tool with role 'qa' to get test requests. Follow the instructions in your CLAUDE.md."
+DEV_PROMPT="You are the Dev agent for project '$PROJECT_NAME'. Check your messages using the check_messages MCP tool with role 'dev' to get your task assignment."
+QA_PROMPT="You are the QA agent for project '$PROJECT_NAME'. Check your messages using the check_messages MCP tool with role 'qa' to get test requests."
+
+# Agent instruction files
+DEV_CLAUDE_MD="$PROJECT_DIR/projects/$PROJECT/agents/dev/CLAUDE.md"
+QA_CLAUDE_MD="$PROJECT_DIR/projects/$PROJECT/agents/qa/CLAUDE.md"
 
 echo "Multi-Agent Dev/QA Orchestrator"
 echo "================================"
@@ -124,14 +132,51 @@ echo "Launching agents..."
 tmux send-keys -t "$SESSION:orch" "python3 orchestrator.py $PROJECT" Enter
 echo "  Orchestrator started (project: $PROJECT)"
 
-# Start Dev agent (interactive Claude Code with MCP config)
+# Generate launcher scripts (avoids quoting issues with tmux send-keys)
+# Scripts read CLAUDE.md at runtime so special characters are handled cleanly
 # Unset CLAUDECODE to avoid "nested session" error when launched from within Claude Code
 # Pass ORCH_PROJECT env var so MCP bridge knows which project's mailbox to use
-tmux send-keys -t "$SESSION:dev" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$DEV_PROMPT\"" Enter
+LAUNCH_DIR="$PROJECT_DIR/shared/$PROJECT"
+mkdir -p "$LAUNCH_DIR"
+
+cat > "$LAUNCH_DIR/launch-dev.sh" <<EOF
+#!/bin/bash
+unset CLAUDECODE
+export ORCH_PROJECT=$PROJECT
+APPEND=""
+if [ -f "$DEV_CLAUDE_MD" ]; then
+    APPEND=\$(cat "$DEV_CLAUDE_MD")
+fi
+if [ -n "\$APPEND" ]; then
+    exec claude --mcp-config "$MCP_CONFIG" --system-prompt "$DEV_PROMPT" --append-system-prompt "\$APPEND" $YOLO_FLAG
+else
+    exec claude --mcp-config "$MCP_CONFIG" --system-prompt "$DEV_PROMPT" $YOLO_FLAG
+fi
+EOF
+chmod +x "$LAUNCH_DIR/launch-dev.sh"
+
+cat > "$LAUNCH_DIR/launch-qa.sh" <<EOF
+#!/bin/bash
+unset CLAUDECODE
+export ORCH_PROJECT=$PROJECT
+APPEND=""
+if [ -f "$QA_CLAUDE_MD" ]; then
+    APPEND=\$(cat "$QA_CLAUDE_MD")
+fi
+if [ -n "\$APPEND" ]; then
+    exec claude --mcp-config "$MCP_CONFIG" --system-prompt "$QA_PROMPT" --append-system-prompt "\$APPEND" $YOLO_FLAG
+else
+    exec claude --mcp-config "$MCP_CONFIG" --system-prompt "$QA_PROMPT" $YOLO_FLAG
+fi
+EOF
+chmod +x "$LAUNCH_DIR/launch-qa.sh"
+
+# Start Dev agent
+tmux send-keys -t "$SESSION:dev" "$LAUNCH_DIR/launch-dev.sh" Enter
 echo "  Dev agent started"
 
-# Start QA agent (interactive Claude Code with MCP config)
-tmux send-keys -t "$SESSION:qa" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$QA_PROMPT\"" Enter
+# Start QA agent
+tmux send-keys -t "$SESSION:qa" "$LAUNCH_DIR/launch-qa.sh" Enter
 echo "  QA agent started"
 
 # --- Merge into single window with split panes ---
