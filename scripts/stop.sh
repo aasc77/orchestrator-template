@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PROJECT=${1:?"Usage: ./scripts/stop.sh <project>  (e.g., example)"}
+PROJECT=${1:?"Usage: $0 <project>  (e.g., example)"}
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_CONFIG="$PROJECT_DIR/projects/$PROJECT/config.yaml"

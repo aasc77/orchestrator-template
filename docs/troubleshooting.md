@@ -16,7 +16,7 @@ ollama pull qwen3:8b
 
 1. Verify MCP bridge is installed:
    ```bash
-   cd mcp-bridge && node test.js
+   node my-orchestrator/mcp-bridge/test.js
    ```
 
 2. Verify MCP is registered with Claude Code:

@@ -49,7 +49,7 @@ my-orchestrator/scripts/new-project.sh my-app
 
 The wizard will:
 1. Ask for the folder name in `~/Repositories/` (your dev repo)
-2. Derive a project name and key (with option to override)
+2. Auto-derive a project name and key from the folder name
 3. Auto-create the QA directory (clones from dev's git remote if available, otherwise creates an empty directory)
 4. Show a summary and ask for confirmation
 5. Generate all project files:
@@ -65,7 +65,7 @@ projects/my-app/
 
 It also creates the shared mailbox and workspace directories at `shared/my-app/`.
 
-**Where things live:** Each project has files in two places:
+**Where things live:** Each project has files in three places:
 
 | Location | What | Purpose |
 |----------|------|---------|
@@ -82,13 +82,13 @@ The `shared/my-app/` directory is created at runtime for the mailbox (how agents
 # Set up working directories
 cd ~/Repositories
 git clone git@github.com:yourorg/my-app.git            # Dev's copy
-git clone git@github.com:yourorg/my-app.git my-app-qa   # QA's copy
+git clone git@github.com:yourorg/my-app.git my-app_qa   # QA's copy
 
 # Create project from template
-cp -r projects/example projects/myproject
+cp -r my-orchestrator/projects/example my-orchestrator/projects/myproject
 
 # Edit config.yaml to point at your directories
-vi projects/myproject/config.yaml
+vi my-orchestrator/projects/myproject/config.yaml
 ```
 
 </details>
@@ -290,4 +290,4 @@ Verify the MCP config has the correct absolute path:
 cat claude-code-mcp-config.json
 ```
 
-The `args` array should contain the full path to `mcp-bridge/index.js`. Run `./scripts/setup.sh` again if it still shows the placeholder.
+The `args` array should contain the full path to `mcp-bridge/index.js`. Run `my-orchestrator/scripts/setup.sh` again if it still shows the placeholder.

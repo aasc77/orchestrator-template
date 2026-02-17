@@ -94,16 +94,16 @@ my-orchestrator/scripts/stop.sh <name>
 # 1. Set up working directories for your agents
 cd ~/Repositories
 git clone git@github.com:yourorg/my-app.git            # Dev's copy
-git clone git@github.com:yourorg/my-app.git my-app-qa   # QA's copy
+git clone git@github.com:yourorg/my-app.git my-app_qa   # QA's copy
 
 # 2. Create your project from the example
-cp -r projects/example projects/myproject
+cp -r my-orchestrator/projects/example my-orchestrator/projects/myproject
 
 # 3. Configure
-vi projects/myproject/config.yaml          # Set working dirs, session name
-vi projects/myproject/tasks.json           # Define your tasks
-vi ~/Repositories/my-app/CLAUDE.md         # Add project context for Dev
-vi ~/Repositories/my-app-qa/CLAUDE.md      # Add test environment for QA
+vi my-orchestrator/projects/myproject/config.yaml   # Set working dirs, session name
+vi my-orchestrator/projects/myproject/tasks.json     # Define your tasks
+vi ~/Repositories/my-app/CLAUDE.md                   # Add project context for Dev
+vi ~/Repositories/my-app_qa/CLAUDE.md                # Add test environment for QA
 ```
 
 </details>
@@ -137,14 +137,14 @@ Multiple projects can run simultaneously (each gets its own tmux session and mai
 ```bash
 cd ~/Repositories
 git clone git@github.com:yourorg/new-project.git              # Dev's copy
-git clone git@github.com:yourorg/new-project.git new-project-qa  # QA's copy
+git clone git@github.com:yourorg/new-project.git new-project_qa  # QA's copy
 ```
 
 ```bash
-cp -r projects/example projects/<name>
+cp -r my-orchestrator/projects/example my-orchestrator/projects/<name>
 ```
 
-Edit `projects/<name>/config.yaml` to point at your working directories:
+Edit `my-orchestrator/projects/<name>/config.yaml` to point at your working directories:
 
 ```yaml
 project: my_new_project
@@ -155,11 +155,11 @@ agents:
     working_dir: ~/Repositories/new-project       # Dev's repo clone
     pane: orch.0
   qa:
-    working_dir: ~/Repositories/new-project-qa    # QA's repo clone
+    working_dir: ~/Repositories/new-project_qa    # QA's repo clone
     pane: orch.1
 ```
 
-Then add tasks to `projects/<name>/tasks.json` and launch with `./scripts/start.sh <name>`.
+Then add tasks to `projects/<name>/tasks.json` and launch with `my-orchestrator/scripts/start.sh <name>`.
 
 </details>
 

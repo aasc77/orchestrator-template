@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-PROJECT=${1:?"Usage: ./scripts/start.sh <project> [--yolo]  (e.g., example)"}
+PROJECT=${1:?"Usage: $0 <project> [--yolo]  (e.g., example)"}
 YOLO_FLAG=""
 if [[ "${2:-}" == "--yolo" ]]; then
     YOLO_FLAG="--dangerously-skip-permissions"
@@ -60,7 +60,7 @@ echo "  ollama server OK"
 # Check MCP config exists
 if [ ! -f "$MCP_CONFIG" ]; then
     echo "MCP config not found at $MCP_CONFIG"
-    echo "Run ./scripts/setup.sh first"
+    echo "Run $PROJECT_DIR/scripts/setup.sh first"
     exit 1
 fi
 echo "  MCP config OK"
