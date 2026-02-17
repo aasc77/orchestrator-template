@@ -17,22 +17,7 @@ Start Ollama (leave it running in a separate terminal or as a background service
 ollama serve
 ```
 
-## 2. Set Up Working Directories
-
-Each agent needs its own working directory. Dev writes code in one, QA tests in the other.
-
-**Why two directories?** Dev and QA run as separate Claude Code sessions. Giving them separate directories prevents them from interfering with each other (e.g., Dev editing a file while QA is reading it). They communicate through a shared MCP mailbox, not through the filesystem.
-
-```bash
-# Example: Dev works in the main repo, QA gets a separate clone
-cd ~/Repositories
-git clone git@github.com:yourorg/my-app.git            # Dev's copy
-git clone git@github.com:yourorg/my-app.git my-app-qa   # QA's copy
-```
-
-You can also point both to the same directory if you prefer -- it works but can cause conflicts if both agents touch the same files simultaneously.
-
-## 3. Clone and Run Setup
+## 2. Clone and Run Setup
 
 ```bash
 git clone <this-repo> my-orchestrator
@@ -48,62 +33,65 @@ Setup will:
 - Configure the MCP bridge with the correct absolute path
 - Run a quick self-test to verify the bridge works
 
-## 4. Create Your Project
+## 3. Create Your Project
 
-**Option A: Interactive wizard (recommended)**
+Run the interactive wizard:
 
 ```bash
 ./scripts/new-project.sh
 ```
 
-The wizard asks for the folder name in `~/Repositories/`, locates (or creates) Dev and QA directories, and generates all project files with correct paths and smoke-test tasks. Skip to step 5 after customizing the generated files.
-
-**Option B: Manual copy**
+Or pass the folder name directly:
 
 ```bash
-cp -r projects/example projects/myproject
+./scripts/new-project.sh my-app
 ```
 
-This gives you:
+The wizard will:
+1. Ask for the folder name in `~/Repositories/` (your dev repo)
+2. Derive a project name and key (with option to override)
+3. Locate or create the QA directory (clone from dev's git remote, create empty, or enter a custom path)
+4. Show a summary and ask for confirmation
+5. Generate all project files:
 
 ```
-projects/myproject/
-├── config.yaml              # Project settings
-├── tasks.json               # Task queue
+projects/my-app/
+├── config.yaml              # Working dirs, session name, pane targets
+├── tasks.json               # Two smoke-test tasks (ready to run)
 └── agents/
-    ├── dev/CLAUDE.md        # Dev agent instructions
-    └── qa/CLAUDE.md         # QA agent instructions
+    ├── dev/CLAUDE.md        # Dev agent instructions (with TODO placeholder)
+    └── qa/CLAUDE.md         # QA agent instructions (with TODO placeholder)
 ```
 
-## 5. Configure Your Project
+It also creates the shared mailbox and workspace directories at `shared/my-app/`.
 
-### config.yaml
+**Why two directories?** Dev and QA run as separate Claude Code sessions. Giving them separate directories prevents them from interfering with each other (e.g., Dev editing a file while QA is reading it). They communicate through a shared MCP mailbox, not through the filesystem. The wizard handles creating the QA directory for you.
 
-Point the agents at the working directories you created in step 2:
+<details>
+<summary>Manual setup (without wizard)</summary>
 
-```yaml
-project: myproject                    # Identifier (used in logs and prompts)
+```bash
+# Set up working directories
+cd ~/Repositories
+git clone git@github.com:yourorg/my-app.git            # Dev's copy
+git clone git@github.com:yourorg/my-app.git my-app-qa   # QA's copy
 
-tmux:
-  session_name: myproject             # tmux session name (must be unique per project)
+# Create project from template
+cp -r projects/example projects/myproject
 
-agents:
-  dev:
-    working_dir: ~/Repositories/my-app        # Dev's repo clone from step 2
-    pane: orch.0                               # Don't change this
-  qa:
-    working_dir: ~/Repositories/my-app-qa     # QA's repo clone from step 2
-    pane: orch.1                               # Don't change this
+# Edit config.yaml to point at your directories
+vi projects/myproject/config.yaml
 ```
 
-**Important:**
-- Both `working_dir` paths must exist before launching. Each agent opens a Claude Code session rooted there.
-- `session_name` must be unique if you run multiple projects simultaneously.
-- `pane` values (`orch.0`, `orch.1`) map to the tmux layout and should not be changed.
+</details>
+
+## 4. Customize Your Project
+
+The wizard generates working defaults, but you'll want to customize these files for your actual project.
 
 ### tasks.json
 
-Define the work you want the agents to do:
+Replace the smoke-test tasks with your real work:
 
 ```json
 {
@@ -134,7 +122,7 @@ Tips for writing good tasks:
 
 ### Agent CLAUDE.md Files
 
-Add project context so agents know what they're working with.
+Fill in the `<!-- TODO -->` placeholders the wizard left in each file.
 
 **`agents/dev/CLAUDE.md`** -- Add under "Project Context":
 ```markdown
@@ -159,7 +147,7 @@ Add project context so agents know what they're working with.
 
 The more context you provide, the better the agents perform.
 
-## 6. Launch
+## 5. Launch
 
 ```bash
 ./scripts/start.sh myproject
@@ -195,7 +183,7 @@ You'll see pre-flight checks, then a tmux session with three panes:
 5. QA gets nudged, tests the work, calls `send_to_dev` with results
 6. The orchestrator decides: advance to next task (pass) or send back (fail)
 
-## 7. Monitor and Interact
+## 6. Monitor and Interact
 
 Click the **ORCH** pane (bottom) to interact with the orchestrator.
 
@@ -241,7 +229,7 @@ To reattach after detaching:
 tmux attach -t myproject
 ```
 
-## 8. Stop
+## 7. Stop
 
 ```bash
 ./scripts/stop.sh myproject
@@ -284,7 +272,7 @@ The orchestrator marks tasks as `stuck` after 5 failed attempts and prints `HUMA
 
 ### Dev says it wrote files but QA can't find them
 
-Dev and QA each work in their own `working_dir` (see step 2). They share files through the MCP workspace tools (`read_workspace_file`, `list_workspace`), not through the filesystem directly. If an agent needs to share a file, it should use the MCP tools. Alternatively, point both agents at the same directory -- but be aware of potential conflicts.
+Dev and QA each work in their own `working_dir`. They share files through the MCP workspace tools (`read_workspace_file`, `list_workspace`), not through the filesystem directly. If an agent needs to share a file, it should use the MCP tools. Alternatively, point both agents at the same directory -- but be aware of potential conflicts.
 
 ### MCP tools not available to agents
 
