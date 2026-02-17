@@ -1,0 +1,28 @@
+{
+  "project": "my_project",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "Smoke test: create a hello world script",
+      "description": "Create a simple hello.py script that prints 'Hello from the orchestrator!' to verify the Dev/QA pipeline works end-to-end.",
+      "acceptance_criteria": [
+        "hello.py exists and runs without errors",
+        "Output includes 'Hello from the orchestrator!'"
+      ],
+      "status": "pending",
+      "attempts": 0
+    },
+    {
+      "id": "task-2",
+      "title": "Add error handling to hello script",
+      "description": "Update hello.py to accept an optional name argument. If provided, print 'Hello, <name>!'. If not, print the default greeting. Handle invalid input gracefully.",
+      "acceptance_criteria": [
+        "python hello.py prints default greeting",
+        "python hello.py World prints 'Hello, World!'",
+        "No crashes on any input"
+      ],
+      "status": "pending",
+      "attempts": 0
+    }
+  ]
+}

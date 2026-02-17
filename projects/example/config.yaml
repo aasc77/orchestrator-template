@@ -1,0 +1,15 @@
+# Project configuration — copy this to projects/<your-project>/config.yaml
+# Only include settings that differ from orchestrator/config.yaml (shared defaults)
+
+project: my_project
+
+tmux:
+  session_name: myproject
+
+agents:
+  dev:
+    working_dir: ~/Repositories/my-project       # EDIT: your dev repo
+    pane: orch.0
+  qa:
+    working_dir: ~/Repositories/my-project-qa    # EDIT: your QA repo (or same as dev)
+    pane: orch.1

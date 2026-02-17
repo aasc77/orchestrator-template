@@ -5,6 +5,11 @@ Multi-Agent Orchestrator (tmux + MCP/Mailbox)
 Coordinates Dev and QA Claude Code agents through the shared mailbox.
 Uses tmux send-keys to nudge agents when new messages arrive.
 
+Usage:
+  python3 orchestrator.py <project>
+
+  where <project> matches a directory under projects/ (e.g., example).
+
 Flow:
   1. Orchestrator writes task assignment to Dev's mailbox
   2. tmux_nudge("dev") sends "check your messages" to Dev's terminal
@@ -17,8 +22,11 @@ Flow:
   9. Repeat until pass or stuck
 """
 
+import argparse
 import json
 import subprocess
+import threading
+import queue
 import time
 import logging
 import sys
@@ -27,6 +35,47 @@ from pathlib import Path
 
 from llm_client import OllamaClient
 from mailbox_watcher import MailboxWatcher
+
+# --- Parse CLI args ---
+parser = argparse.ArgumentParser(description="Multi-Agent Orchestrator")
+parser.add_argument("project", help="Project name (matches projects/<name>/)")
+args = parser.parse_args()
+
+# --- Resolve paths ---
+orchestrator_dir = Path(__file__).parent
+root_dir = orchestrator_dir.parent
+project_dir = root_dir / "projects" / args.project
+
+if not project_dir.is_dir():
+    print(f"Error: Project '{args.project}' not found at {project_dir}")
+    print(f"Available projects: {', '.join(p.name for p in (root_dir / 'projects').iterdir() if p.is_dir())}")
+    sys.exit(1)
+
+# --- Load & merge configs ---
+with open(orchestrator_dir / "config.yaml") as f:
+    config = yaml.safe_load(f)
+
+with open(project_dir / "config.yaml") as f:
+    project_config = yaml.safe_load(f)
+
+# Deep-merge: project overrides shared (two levels deep so that e.g.
+# agents.dev from project config merges with agents.dev defaults rather
+# than replacing the entire agents.dev dict).
+for key, val in project_config.items():
+    if isinstance(val, dict) and key in config and isinstance(config[key], dict):
+        merged = {**config[key]}
+        for k2, v2 in val.items():
+            if isinstance(v2, dict) and k2 in merged and isinstance(merged[k2], dict):
+                merged[k2] = {**merged[k2], **v2}
+            else:
+                merged[k2] = v2
+        config[key] = merged
+    else:
+        config[key] = val
+
+# --- Resolve per-project paths ---
+mailbox_dir = str(root_dir / "shared" / args.project / "mailbox")
+tasks_path = project_dir / "tasks.json"
 
 # --- Setup Logging ---
 logging.basicConfig(
@@ -39,11 +88,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Load Config ---
-config_path = Path(__file__).parent / "config.yaml"
-with open(config_path) as f:
-    config = yaml.safe_load(f)
-
 # --- Initialize Components ---
 llm = OllamaClient(
     base_url=config["llm"]["base_url"],
@@ -51,11 +95,9 @@ llm = OllamaClient(
     disable_thinking=config["llm"].get("disable_thinking", False),
 )
 
-mailbox_dir = str(Path(__file__).parent / config["polling"]["mailbox_dir"])
 mailbox = MailboxWatcher(mailbox_dir=mailbox_dir)
 
 # --- Load Tasks ---
-tasks_path = Path(__file__).parent / config["tasks"]["file"]
 with open(tasks_path) as f:
     tasks_data = json.load(f)
 
@@ -78,7 +120,7 @@ _last_nudge = {}
 
 
 def tmux_nudge(agent: str):
-    """Send a nudge to an agent's tmux pane via send-keys.
+    """Send a nudge to an agent's tmux window via send-keys.
 
     Includes cooldown to prevent stacking multiple nudges.
     Gracefully degrades if tmux is unavailable or session is gone.
@@ -95,17 +137,20 @@ def tmux_nudge(agent: str):
     try:
         # Send text and Enter separately — Claude Code's TUI needs a brief
         # gap between input and submit for the keypress to register.
-        subprocess.run(
+        result = subprocess.run(
             ["tmux", "send-keys", "-t", target, "-l", tmux_nudge_prompt],
             capture_output=True, text=True, timeout=5,
         )
+        if result.returncode != 0:
+            logger.warning(f"tmux send-keys to {agent} failed (target={target}): {result.stderr.strip()}")
+            return
         time.sleep(0.2)
         subprocess.run(
             ["tmux", "send-keys", "-t", target, "Enter"],
             capture_output=True, text=True, timeout=5,
         )
         _last_nudge[agent] = now
-        logger.info(f"Nudged {agent} via tmux send-keys")
+        logger.info(f"Nudged {agent} via tmux send-keys (target={target})")
     except FileNotFoundError:
         logger.warning("tmux not found — nudge skipped (agents must poll manually)")
     except subprocess.TimeoutExpired:
@@ -119,11 +164,207 @@ def check_tmux_session() -> bool:
     try:
         result = subprocess.run(
             ["tmux", "has-session", "-t", tmux_session],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.SubprocessError):
         return False
+
+
+# --- Interactive command interface ---
+_cmd_queue = queue.Queue()
+_paused = False
+
+
+def _stdin_reader():
+    """Background thread that reads stdin and queues commands."""
+    while True:
+        try:
+            line = input()
+            if line.strip():
+                _cmd_queue.put(line.strip())
+        except EOFError:
+            break
+
+
+def send_to_pane(agent: str, text: str):
+    """Send arbitrary text to an agent's tmux pane and press Enter."""
+    target = _agent_pane_targets.get(agent, f"{tmux_session}:{agent}")
+    try:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "-l", text],
+            capture_output=True, text=True, timeout=5,
+        )
+        time.sleep(0.2)
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "Enter"],
+            capture_output=True, text=True, timeout=5,
+        )
+        print(f"  Sent to {agent}: {text[:80]}")
+    except subprocess.SubprocessError as e:
+        print(f"  Failed to send to {agent}: {e}")
+
+
+def interpret_natural_command(text: str):
+    """Use the LLM to interpret a natural language command."""
+    idx, task = get_current_task()
+    completed = sum(1 for t in tasks if t["status"] == "completed")
+    stuck = sum(1 for t in tasks if t["status"] == "stuck")
+    pending = sum(1 for t in tasks if t["status"] == "pending")
+
+    system = """You are the orchestrator's command interpreter. The human typed a message in the orchestrator console.
+Interpret their intent and respond with JSON only:
+{
+  "action": "msg_dev" | "msg_qa" | "nudge_dev" | "nudge_qa" | "skip" | "pause" | "resume" | "status" | "reply",
+  "text": "text to send to agent (for msg_dev/msg_qa) or reply to show the human (for reply/status)",
+  "reasoning": "brief explanation"
+}
+
+Actions:
+- msg_dev: send text to Dev agent's terminal
+- msg_qa: send text to QA agent's terminal
+- nudge_dev/nudge_qa: remind agent to check messages
+- skip: skip current task
+- pause/resume: pause/resume polling
+- status: show current state (put a summary in "text")
+- reply: just respond to the human (for questions, chitchat, etc.)
+
+Keep "text" concise and actionable."""
+
+    context = f"""## Current State
+- Current task: {json.dumps(task, indent=2) if task else "None"}
+- Completed: {completed}, Pending: {pending}, Stuck: {stuck}, Paused: {_paused}
+
+## Human said:
+{text}"""
+
+    decision = llm.decide_with_system(system, context)
+    action = decision.get("action", "reply")
+    reply_text = decision.get("text", "")
+
+    if action == "msg_dev":
+        send_to_pane("dev", reply_text)
+    elif action == "msg_qa":
+        send_to_pane("qa", reply_text)
+    elif action == "nudge_dev":
+        _last_nudge.pop("dev", None)
+        tmux_nudge("dev")
+    elif action == "nudge_qa":
+        _last_nudge.pop("qa", None)
+        tmux_nudge("qa")
+    elif action == "skip":
+        handle_command("skip")
+    elif action == "pause":
+        handle_command("pause")
+    elif action == "resume":
+        handle_command("resume")
+    elif action == "status":
+        if reply_text:
+            print(f"\n  {reply_text}\n")
+        else:
+            handle_command("status")
+    elif action == "reply":
+        print(f"\n  {reply_text}\n")
+    else:
+        fallback = "Sorry, I didn't understand that."
+        print(f"\n  {reply_text or fallback}\n")
+
+
+def handle_command(cmd: str):
+    """Process an interactive command."""
+    global _paused
+    parts = cmd.split(None, 2)
+    command = parts[0].lower()
+
+    if command == "help":
+        print("\n--- Orchestrator Commands ---")
+        print("  status          - Current task and progress")
+        print("  tasks           - List all tasks with status")
+        print("  skip            - Skip current stuck/in-progress task")
+        print("  nudge dev|qa    - Manually nudge an agent")
+        print("  msg dev|qa TEXT - Send text to an agent's pane")
+        print("  pause           - Pause mailbox polling")
+        print("  resume          - Resume mailbox polling")
+        print("  log             - Show last 10 log entries")
+        print("  help            - Show this help")
+        print("-----------------------------\n")
+
+    elif command == "status":
+        idx, task = get_current_task()
+        completed = sum(1 for t in tasks if t["status"] == "completed")
+        stuck = sum(1 for t in tasks if t["status"] == "stuck")
+        pending = sum(1 for t in tasks if t["status"] == "pending")
+        print(f"\n--- Status ({args.project}) ---")
+        print(f"  Completed: {completed}  In-progress: {1 if task else 0}  Pending: {pending}  Stuck: {stuck}")
+        if task:
+            print(f"  Current: [{task['id']}] {task['title']}")
+            print(f"  Attempts: {task['attempts']}/{config['tasks']['max_attempts_per_task']}")
+        else:
+            print("  No active task")
+        print(f"  Paused: {_paused}")
+        print(f"--------------\n")
+
+    elif command == "tasks":
+        print("\n--- Tasks ---")
+        for t in tasks:
+            marker = {"completed": "+", "in_progress": ">", "pending": " ", "stuck": "!"}
+            m = marker.get(t["status"], "?")
+            print(f"  [{m}] {t['id']}: {t['title']} ({t['status']}, attempts: {t['attempts']})")
+        print(f"-------------\n")
+
+    elif command == "skip":
+        idx, task = get_current_task()
+        if task:
+            task["status"] = "stuck"
+            save_tasks()
+            print(f"  Skipped task {task['id']}: {task['title']}")
+            next_idx, next_task = get_current_task()
+            if next_task:
+                print(f"  Next task: {next_task['id']}: {next_task['title']}")
+                assign_task_to_dev(next_task)
+            else:
+                print("  No more tasks")
+        else:
+            print("  No active task to skip")
+
+    elif command == "nudge":
+        if len(parts) < 2 or parts[1] not in ("dev", "qa"):
+            print("  Usage: nudge dev|qa")
+        else:
+            agent = parts[1]
+            _last_nudge.pop(agent, None)  # clear cooldown
+            tmux_nudge(agent)
+
+    elif command == "msg":
+        if len(parts) < 3 or parts[1] not in ("dev", "qa"):
+            print("  Usage: msg dev|qa <text to send>")
+        else:
+            send_to_pane(parts[1], parts[2])
+
+    elif command == "pause":
+        _paused = True
+        print("  Polling paused. Type 'resume' to continue.")
+
+    elif command == "resume":
+        _paused = False
+        print("  Polling resumed.")
+
+    elif command == "log":
+        try:
+            log_path = Path(__file__).parent / "orchestrator.log"
+            lines = log_path.read_text().strip().split("\n")
+            print("\n--- Last 10 log entries ---")
+            for line in lines[-10:]:
+                print(f"  {line}")
+            print(f"---------------------------\n")
+        except Exception as e:
+            print(f"  Could not read log: {e}")
+
+    else:
+        # Natural language -- route through LLM
+        interpret_natural_command(cmd)
 
 
 def save_tasks():
@@ -158,7 +399,7 @@ def write_to_mailbox(recipient: str, msg_type: str, content: dict):
     target_dir.mkdir(parents=True, exist_ok=True)
     filepath = target_dir / f"{msg_id}.json"
     filepath.write_text(json.dumps(message, indent=2))
-    logger.info(f"📤 Wrote {msg_type} to {recipient}'s mailbox ({msg_id})")
+    logger.info(f"Wrote {msg_type} to {recipient}'s mailbox ({msg_id})")
     return message
 
 
@@ -201,10 +442,10 @@ def assign_task_to_dev(task: dict):
         ),
     }
     write_to_mailbox("dev", "task_assignment", content)
+    tmux_nudge("dev")
     task["status"] = "in_progress"
     save_tasks()
     logger.info(f"Assigned task {task['id']} to Dev")
-    tmux_nudge("dev")
 
 
 def handle_qa_message(message: dict):
@@ -231,7 +472,7 @@ def handle_qa_message(message: dict):
     if action == "next_task":
         task["status"] = "completed"
         save_tasks()
-        logger.info(f"✅ Task {task['id']} COMPLETED")
+        logger.info(f"Task {task['id']} COMPLETED")
 
         next_idx, next_task = get_current_task()
         if next_task:
@@ -239,16 +480,16 @@ def handle_qa_message(message: dict):
         else:
             logger.info("ALL TASKS COMPLETED!")
             write_to_mailbox("dev", "all_done", {"message": "All tasks complete! Great work."})
-            write_to_mailbox("qa", "all_done", {"message": "All tasks complete! Great work."})
             tmux_nudge("dev")
+            write_to_mailbox("qa", "all_done", {"message": "All tasks complete! Great work."})
             tmux_nudge("qa")
 
     elif action == "send_to_dev":
         if task["attempts"] >= config["tasks"]["max_attempts_per_task"]:
-            logger.warning(f"⚠️ Task {task['id']} exceeded max attempts")
+            logger.warning(f"Task {task['id']} exceeded max attempts")
             task["status"] = "stuck"
             save_tasks()
-            print(f"\n🚨 HUMAN REVIEW NEEDED: Task {task['id']} - {task['title']}")
+            print(f"\nHUMAN REVIEW NEEDED: Task {task['id']} - {task['title']}")
             print(f"   Failed {task['attempts']} times. Check orchestrator.log.\n")
         else:
             fix_msg = decision.get("message", "QA found bugs. Check messages and fix.")
@@ -268,7 +509,7 @@ def handle_qa_message(message: dict):
         task["status"] = "stuck"
         save_tasks()
         msg = decision.get("message", "Unknown issue")
-        print(f"\n🚨 HUMAN REVIEW NEEDED: {msg}\n")
+        print(f"\nHUMAN REVIEW NEEDED: {msg}\n")
         logger.warning(f"Flagged for human: {msg}")
 
 
@@ -294,7 +535,7 @@ def handle_dev_message(message: dict):
 def main():
     """Main orchestrator loop."""
     logger.info("=" * 60)
-    logger.info("Multi-Agent Orchestrator Starting (tmux + MCP/Mailbox)")
+    logger.info(f"Multi-Agent Orchestrator Starting — project: {args.project}")
     logger.info("=" * 60)
 
     # Pre-flight: check LLM
@@ -304,52 +545,67 @@ def main():
         sys.exit(1)
     logger.info(f"LLM ready ({config['llm']['model']})")
     logger.info(f"Mailbox dir: {mailbox_dir}")
+    logger.info(f"Tasks file: {tasks_path}")
 
-    # Detect tmux session
+    # Pre-flight: check tmux session
     if check_tmux_session():
         logger.info(f"tmux session '{tmux_session}' detected — nudges enabled")
     else:
-        logger.info(f"tmux session '{tmux_session}' not found — agents must poll manually")
+        logger.warning(f"tmux session '{tmux_session}' not found — nudges will be skipped")
 
     # Assign first task
     idx, first_task = get_current_task()
     if first_task:
         logger.info(f"Starting with task: {first_task['title']}")
         assign_task_to_dev(first_task)
-        tmux_nudge("dev")
     else:
         logger.info("No pending tasks found")
         return
+
+    # Start interactive command reader
+    cmd_thread = threading.Thread(target=_stdin_reader, daemon=True)
+    cmd_thread.start()
 
     # Main polling loop
     poll_interval = config["polling"]["interval_seconds"]
     logger.info(f"Polling mailbox every {poll_interval}s...")
     logger.info("Agents will be nudged via tmux when new messages arrive.")
+    logger.info("Type 'help' for interactive commands.")
     logger.info("")
 
     try:
         while True:
-            # Check for messages from Dev -> QA (Dev sent code for testing)
-            for dev_msg in mailbox.check_new_messages("qa"):
-                if dev_msg.get("from") != "orchestrator":
-                    logger.info(f"📨 Dev sent: {dev_msg['type']}")
-                    handle_dev_message(dev_msg)
+            # Process any queued commands
+            while not _cmd_queue.empty():
+                try:
+                    cmd = _cmd_queue.get_nowait()
+                    handle_command(cmd)
+                except queue.Empty:
+                    break
 
-            # Check for messages from QA -> Dev (QA sent test results)
-            for qa_msg in mailbox.check_new_messages("dev"):
-                if qa_msg.get("from") != "orchestrator":
-                    logger.info(f"📨 QA sent: {qa_msg['type']}")
-                    handle_qa_message(qa_msg)
+            # Skip mailbox polling if paused
+            if not _paused:
+                # Check for messages from Dev -> QA (Dev sent code for testing)
+                for dev_msg in mailbox.check_new_messages("qa"):
+                    if dev_msg.get("from") != "orchestrator":
+                        logger.info(f"Dev sent: {dev_msg['type']}")
+                        handle_dev_message(dev_msg)
 
-            # Check if all tasks done
-            all_done = all(
-                t["status"] in ("completed", "stuck") for t in tasks
-            )
-            if all_done:
-                completed = sum(1 for t in tasks if t["status"] == "completed")
-                stuck = sum(1 for t in tasks if t["status"] == "stuck")
-                logger.info(f"🏁 All tasks processed: {completed} completed, {stuck} stuck")
-                break
+                # Check for messages from QA -> Dev (QA sent test results)
+                for qa_msg in mailbox.check_new_messages("dev"):
+                    if qa_msg.get("from") != "orchestrator":
+                        logger.info(f"QA sent: {qa_msg['type']}")
+                        handle_qa_message(qa_msg)
+
+                # Check if all tasks done
+                all_done = all(
+                    t["status"] in ("completed", "stuck") for t in tasks
+                )
+                if all_done:
+                    completed = sum(1 for t in tasks if t["status"] == "completed")
+                    stuck = sum(1 for t in tasks if t["status"] == "stuck")
+                    logger.info(f"All tasks processed: {completed} completed, {stuck} stuck")
+                    break
 
             time.sleep(poll_interval)
 

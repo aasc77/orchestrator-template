@@ -1,23 +1,33 @@
 #!/bin/bash
 set -e
 
+PROJECT=${1:?"Usage: ./scripts/start.sh <project>  (e.g., example)"}
+
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SESSION="devqa"
+PROJECT_CONFIG="$PROJECT_DIR/projects/$PROJECT/config.yaml"
 MCP_CONFIG="$PROJECT_DIR/claude-code-mcp-config.json"
 
-# ============================================================
-# CONFIGURE THESE: Agent working directories
-# Point each agent at the repo it should work in.
-# ============================================================
-DEV_DIR="$HOME/your-project"          # <-- Dev agent's repo
-QA_DIR="$HOME/your-project-tests"     # <-- QA agent's repo
+# Validate project exists
+if [ ! -f "$PROJECT_CONFIG" ]; then
+    echo "Error: Project '$PROJECT' not found at $PROJECT_CONFIG"
+    echo "Available projects:"
+    ls -1 "$PROJECT_DIR/projects/"
+    exit 1
+fi
+
+# Read project config values via Python/YAML
+SESSION=$(python3 -c "import yaml; print(yaml.safe_load(open('$PROJECT_CONFIG'))['tmux']['session_name'])")
+DEV_DIR=$(python3 -c "import yaml; print(yaml.safe_load(open('$PROJECT_CONFIG'))['agents']['dev']['working_dir'])")
+QA_DIR=$(python3 -c "import yaml; print(yaml.safe_load(open('$PROJECT_CONFIG'))['agents']['qa']['working_dir'])")
+PROJECT_NAME=$(python3 -c "import yaml; print(yaml.safe_load(open('$PROJECT_CONFIG'))['project'])")
 
 # System prompts for agents
-DEV_PROMPT="You are the Dev agent. Check your messages using the check_messages MCP tool with role 'dev' to get your task assignment. Follow the instructions in your CLAUDE.md."
-QA_PROMPT="You are the QA agent. Check your messages using the check_messages MCP tool with role 'qa' to get test requests. Follow the instructions in your CLAUDE.md."
+DEV_PROMPT="You are the Dev agent for project '$PROJECT_NAME'. Check your messages using the check_messages MCP tool with role 'dev' to get your task assignment. Follow the instructions in your CLAUDE.md."
+QA_PROMPT="You are the QA agent for project '$PROJECT_NAME'. Check your messages using the check_messages MCP tool with role 'qa' to get test requests. Follow the instructions in your CLAUDE.md."
 
 echo "Multi-Agent Dev/QA Orchestrator"
 echo "================================"
+echo "Project: $PROJECT ($PROJECT_NAME)"
 echo ""
 
 # --- Pre-flight checks ---
@@ -51,6 +61,21 @@ if [ ! -f "$MCP_CONFIG" ]; then
 fi
 echo "  MCP config OK"
 
+# Check agent working dirs exist
+if [ ! -d "$DEV_DIR" ]; then
+    echo "Dev working dir not found: $DEV_DIR"
+    echo "Create it or update $PROJECT_CONFIG"
+    exit 1
+fi
+echo "  Dev dir OK ($DEV_DIR)"
+
+if [ ! -d "$QA_DIR" ]; then
+    echo "QA working dir not found: $QA_DIR"
+    echo "Creating it..."
+    mkdir -p "$QA_DIR"
+fi
+echo "  QA dir OK ($QA_DIR)"
+
 echo ""
 
 # --- Kill existing session ---
@@ -69,9 +94,11 @@ fi
 
 # --- Clear old mailbox messages ---
 echo "Clearing old mailbox messages..."
-rm -f "$PROJECT_DIR/shared/mailbox/to_dev/"*.json 2>/dev/null || true
-rm -f "$PROJECT_DIR/shared/mailbox/to_qa/"*.json 2>/dev/null || true
-echo "  Mailboxes cleared"
+MAILBOX_DIR="$PROJECT_DIR/shared/$PROJECT/mailbox"
+mkdir -p "$MAILBOX_DIR/to_dev" "$MAILBOX_DIR/to_qa"
+rm -f "$MAILBOX_DIR/to_dev/"*.json 2>/dev/null || true
+rm -f "$MAILBOX_DIR/to_qa/"*.json 2>/dev/null || true
+echo "  Mailboxes cleared ($MAILBOX_DIR)"
 
 # --- Create tmux session ---
 echo ""
@@ -93,17 +120,18 @@ echo "  Window 'qa' created (dir: $QA_DIR)"
 echo ""
 echo "Launching agents..."
 
-# Start orchestrator
-tmux send-keys -t "$SESSION:orch" "python3 orchestrator.py" Enter
-echo "  Orchestrator started"
+# Start orchestrator with project argument
+tmux send-keys -t "$SESSION:orch" "python3 orchestrator.py $PROJECT" Enter
+echo "  Orchestrator started (project: $PROJECT)"
 
 # Start Dev agent (interactive Claude Code with MCP config)
 # Unset CLAUDECODE to avoid "nested session" error when launched from within Claude Code
-tmux send-keys -t "$SESSION:dev" "unset CLAUDECODE && claude --mcp-config $MCP_CONFIG --system-prompt \"$DEV_PROMPT\"" Enter
+# Pass ORCH_PROJECT env var so MCP bridge knows which project's mailbox to use
+tmux send-keys -t "$SESSION:dev" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$DEV_PROMPT\"" Enter
 echo "  Dev agent started"
 
 # Start QA agent (interactive Claude Code with MCP config)
-tmux send-keys -t "$SESSION:qa" "unset CLAUDECODE && claude --mcp-config $MCP_CONFIG --system-prompt \"$QA_PROMPT\"" Enter
+tmux send-keys -t "$SESSION:qa" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$QA_PROMPT\"" Enter
 echo "  QA agent started"
 
 # --- Merge into single window with split panes ---
@@ -114,7 +142,7 @@ echo "Merging windows into split-pane layout..."
 # Layout: dev and qa side by side on top, orch full-width on bottom
 tmux join-pane -s "$SESSION:dev" -t "$SESSION:orch" -v -b
 tmux join-pane -s "$SESSION:qa" -t "$SESSION:orch.0" -h
-echo "  Layout applied"
+echo "  Tiled layout applied"
 
 # --- Pane styling ---
 echo "Applying pane styling..."
@@ -124,9 +152,9 @@ tmux set-option -t "$SESSION" pane-border-status top
 tmux set-option -t "$SESSION" pane-border-format " #{?pane_active,#[bold],#[dim]}#{pane_title} "
 
 # Set pane titles (pane 0=dev, 1=qa, 2=orch)
-tmux select-pane -t "$SESSION:orch.0" -T "DEV"
-tmux select-pane -t "$SESSION:orch.1" -T "QA"
-tmux select-pane -t "$SESSION:orch.2" -T "ORCH"
+tmux select-pane -t "$SESSION:orch.0" -T "DEV [$PROJECT]"
+tmux select-pane -t "$SESSION:orch.1" -T "QA [$PROJECT]"
+tmux select-pane -t "$SESSION:orch.2" -T "ORCH [$PROJECT]"
 
 # Per-pane background tinting (subtle, not distracting)
 tmux select-pane -t "$SESSION:orch.0" -P 'bg=colour17'     # dev: very dark blue
@@ -155,7 +183,7 @@ echo "  Nudged Dev to pick up first task"
 # --- Attach ---
 echo ""
 echo "================================"
-echo "Session '$SESSION' is running!"
+echo "Session '$SESSION' is running! (project: $PROJECT)"
 echo ""
 echo "Panes:"
 echo "  0: DEV   - Dev agent (top-left)        [dark blue bg]"
@@ -163,12 +191,11 @@ echo "  1: QA    - QA agent (top-right)        [near-black bg]"
 echo "  2: ORCH  - Orchestrator (bottom)       [near-black bg]"
 echo ""
 echo "Navigation:"
-echo "  Click      - Switch panes (mouse enabled)"
-echo "  Ctrl-b q   - Show pane numbers"
-echo "  Ctrl-b o   - Cycle to next pane"
-echo "  Ctrl-b ;   - Toggle last active pane"
-echo "  Ctrl-b d   - Detach (session keeps running)"
-echo "  ./scripts/stop.sh - Graceful shutdown"
+echo "  Ctrl-b q       - Show pane numbers"
+echo "  Ctrl-b o       - Cycle to next pane"
+echo "  Ctrl-b ;       - Toggle last active pane"
+echo "  Ctrl-b d       - Detach (session keeps running)"
+echo "  ./scripts/stop.sh $PROJECT - Graceful shutdown"
 echo "================================"
 echo ""
 

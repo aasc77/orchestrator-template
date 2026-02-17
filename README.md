@@ -1,7 +1,7 @@
-# Multi-Agent Dev/QA System with AI Orchestrator
+# Multi-Agent Dev/QA Orchestrator
 
-Fully automated: Dev codes, QA tests, local AI orchestrator routes decisions.
-All communication happens through a shared MCP mailbox — no tmux wiring needed.
+Automated Dev/QA workflow: Dev codes, QA tests, local AI orchestrator routes decisions.
+Supports multiple projects from a single installation.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ All communication happens through a shared MCP mailbox — no tmux wiring needed
 +-----------+--------------------------+
             | reads/writes
       +-----+-----+
-      |  Mailbox  |  (shared/mailbox/ or ~/shared-comms/)
+      |  Mailbox  |  (shared/<project>/mailbox/)
       +-----+-----+
             | MCP tools: check_messages, send_to_qa, send_to_dev
       +-----+-----+
@@ -39,109 +39,148 @@ All communication happens through a shared MCP mailbox — no tmux wiring needed
    - **STUCK** (5+ attempts) -> flags for human review
 8. Loop until all tasks complete
 
-No tmux. No keystrokes. Just files in a folder.
-
-## Quick Start (Existing Agents)
-
-If you already have Dev and QA agents running with `~/shared-comms/`:
+## Quick Start
 
 ```bash
-# 1. Copy this template to your project
-cp -r orchestrator-template my-project-orchestrator
-cd my-project-orchestrator
+# 1. Clone and install
+git clone <this-repo> my-orchestrator
+cd my-orchestrator
+./scripts/setup.sh
 
-# 2. Bridge existing folders to MCP mailbox
-chmod +x scripts/*.sh
-./scripts/migrate-comms.sh
+# 2. Create your project from the example
+cp -r projects/example projects/myproject
 
-# 3. Add MCP tools to both agents (if not already done)
-claude mcp add agent-bridge node $(pwd)/mcp-bridge/index.js
+# 3. Configure
+vi projects/myproject/config.yaml          # Set working dirs, session name
+vi projects/myproject/tasks.json           # Define your tasks
+vi projects/myproject/agents/dev/CLAUDE.md # Add project context for Dev
+vi projects/myproject/agents/qa/CLAUDE.md  # Add test environment for QA
 
-# 4. Copy CLAUDE.md to each agent's working directory
-cp agents/dev/CLAUDE.md /path/to/dev/agent/CLAUDE.md
-cp agents/qa/CLAUDE.md /path/to/qa/agent/CLAUDE.md
+# 4. Launch
+./scripts/start.sh myproject
 
-# 5. Edit tasks.json with your project's tasks
-
-# 6. Tell each agent to re-read CLAUDE.md
-
-# 7. Start orchestrator
-./scripts/start.sh
+# 5. Stop
+./scripts/stop.sh myproject
 ```
 
-## Fresh Install
+## Adding a New Project
 
 ```bash
-cd my-project-orchestrator
-./scripts/setup.sh      # Install deps, pull Qwen3 8B
-# Edit tasks.json with your tasks
-# Edit agents/dev/CLAUDE.md and agents/qa/CLAUDE.md with project context
-./scripts/start.sh      # Start orchestrator
-# Start Claude Code in two terminals with MCP config
+cp -r projects/example projects/<name>
 ```
+
+Edit `projects/<name>/config.yaml`:
+
+```yaml
+project: my_new_project
+tmux:
+  session_name: mynewproject
+agents:
+  dev:
+    working_dir: ~/Repositories/my-new-project
+    pane: orch.0
+  qa:
+    working_dir: ~/Repositories/my-new-project-qa
+    pane: orch.1
+```
+
+Then add tasks to `projects/<name>/tasks.json` and launch with `./scripts/start.sh <name>`.
+
+Multiple projects can run simultaneously (each gets its own tmux session and mailbox).
 
 ## Configuration
 
-### tasks.json
-Define your tasks with:
-- `id`: Unique identifier (e.g., `issue-42`)
-- `title`: Short description
-- `description`: Detailed requirements for the Dev agent
-- `acceptance_criteria`: Measurable outcomes QA will verify
-- `status`: `pending`, `in_progress`, `completed`, or `stuck`
+### Project Config (`projects/<name>/config.yaml`)
+Per-project settings that override shared defaults:
+- `project`: Project identifier
+- `tmux.session_name`: tmux session name (must be unique per project)
+- `agents.dev.working_dir`: Dev agent's working directory
+- `agents.qa.working_dir`: QA agent's working directory
+- `agents.*.pane`: tmux pane target (orch.0 = dev, orch.1 = qa)
 
-### Agent CLAUDE.md Files
-Customize `agents/dev/CLAUDE.md` and `agents/qa/CLAUDE.md` with:
-- Project-specific context (architecture, tech stack, URLs)
-- Test credentials and environment details
-- Known bugs and deployment instructions
-
-### config.yaml
-Tune orchestrator behavior:
+### Shared Config (`orchestrator/config.yaml`)
+Defaults for all projects:
 - LLM model and temperature
 - Polling interval
 - Max retry attempts per task
+- tmux nudge prompt and cooldown
+
+Project configs are deep-merged with shared defaults (project values win).
+
+### Tasks (`projects/<name>/tasks.json`)
+Define tasks with:
+- `id`: Unique identifier
+- `title`: Short description
+- `description`: Detailed requirements
+- `acceptance_criteria`: Measurable outcomes QA will verify
+- `status`: `pending`, `in_progress`, `completed`, or `stuck`
+
+### Agent Instructions (`projects/<name>/agents/{dev,qa}/CLAUDE.md`)
+Customize with project-specific context:
+- Tech stack, architecture, key URLs
+- Test credentials and environment details
+- Known bugs and deployment instructions
 
 ## File Structure
 
 ```
 orchestrator-template/
 ├── README.md
-├── tasks.json                   # Task queue (edit with your tasks)
-├── claude-code-mcp-config.json  # MCP config for Claude Code
-├── mcp-bridge/
-│   ├── package.json
-│   ├── index.js                 # MCP server (mailbox tools)
-│   └── test.js
+├── claude-code-mcp-config.json      # MCP config for Claude Code agents
+├── projects/
+│   └── example/                     # Template project (copy to create new)
+│       ├── config.yaml              # Project config (session, working dirs)
+│       ├── tasks.json               # Task queue
+│       └── agents/
+│           ├── dev/CLAUDE.md        # Dev agent instructions
+│           └── qa/CLAUDE.md         # QA agent instructions
 ├── orchestrator/
-│   ├── orchestrator.py          # Main loop (polls mailbox, asks LLM)
-│   ├── llm_client.py            # Ollama API client
-│   ├── mailbox_watcher.py       # File watcher for mailbox
-│   ├── requirements.txt
-│   └── config.yaml              # Settings (model, poll interval, etc)
-├── agents/
-│   ├── dev/CLAUDE.md            # Dev persona + project context
-│   └── qa/CLAUDE.md             # QA persona + test environment
-├── shared/
-│   └── mailbox/
-│       ├── to_dev/              # Messages for Dev
-│       └── to_qa/               # Messages for QA
+│   ├── orchestrator.py              # Main loop (polls mailbox, asks LLM)
+│   ├── llm_client.py                # Ollama API client
+│   ├── mailbox_watcher.py           # File watcher for mailbox
+│   ├── config.yaml                  # Shared defaults
+│   └── requirements.txt
+├── mcp-bridge/
+│   ├── index.js                     # MCP server (mailbox tools)
+│   ├── package.json
+│   └── test.js
 ├── scripts/
-│   ├── setup.sh                 # One-time install
-│   ├── start.sh                 # Start orchestrator
-│   ├── stop.sh                  # Stop orchestrator
-│   └── migrate-comms.sh         # Bridge existing ~/shared-comms/
+│   ├── setup.sh                     # One-time install
+│   ├── start.sh <project>           # Launch a project session
+│   └── stop.sh <project>            # Stop a project session
+├── shared/                          # Created at runtime per project
+│   └── <project>/
+│       ├── mailbox/
+│       │   ├── to_dev/
+│       │   └── to_qa/
+│       └── workspace/
 └── docs/
     ├── mcp-setup.md
     └── troubleshooting.md
 ```
 
-## For Claude Code
+## Interactive Commands
 
-If you are Claude Code continuing this project:
-1. Read ALL files before making changes
-2. The MCP bridge must be installed (`npm install` in mcp-bridge/)
-3. Agents communicate ONLY through MCP tools (check_messages, send_to_qa, send_to_dev)
-4. The orchestrator is a separate Python process that polls the same mailbox
-5. Orchestrator writes messages as JSON files — agents read them via MCP
-6. Check config.yaml for tunable settings (model, poll interval, max attempts)
+While the orchestrator is running, type commands in the ORCH pane:
+
+| Command | Description |
+|---|---|
+| `status` | Current task and progress |
+| `tasks` | List all tasks with status |
+| `skip` | Skip current stuck task |
+| `nudge dev\|qa` | Manually nudge an agent |
+| `msg dev\|qa TEXT` | Send text to an agent's pane |
+| `pause` / `resume` | Pause/resume mailbox polling |
+| `log` | Show last 10 log entries |
+| `help` | Show all commands |
+
+You can also type natural language -- the orchestrator's LLM will interpret it.
+
+## Prerequisites
+
+- macOS (tested on Apple Silicon)
+- [tmux](https://github.com/tmux/tmux) -- `brew install tmux`
+- [Node.js](https://nodejs.org/) -- `brew install node`
+- [Python 3](https://www.python.org/) -- `brew install python3`
+- [Claude Code](https://claude.com/claude-code) -- `npm install -g @anthropic-ai/claude-code`
+- [Ollama](https://ollama.ai/) -- `brew install ollama` (+ `ollama pull qwen3:8b`)

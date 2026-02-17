@@ -4,7 +4,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MAILBOX_DIR = path.resolve(__dirname, "../shared/mailbox");
+const ORCH_PROJECT = process.env.ORCH_PROJECT;
+const MAILBOX_DIR = ORCH_PROJECT
+  ? path.resolve(__dirname, `../shared/${ORCH_PROJECT}/mailbox`)
+  : path.resolve(__dirname, "../shared/mailbox");
 
 // Test creating a message
 const testMsg = {

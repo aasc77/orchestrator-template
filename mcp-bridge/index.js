@@ -9,10 +9,21 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Default paths - override with environment variables to match existing setup
-// Set MAILBOX_DIR and WORKSPACE_DIR env vars to use existing shared-comms folders
-const MAILBOX_DIR = process.env.MAILBOX_DIR || path.resolve(__dirname, "../shared/mailbox");
-const WORKSPACE_DIR = process.env.WORKSPACE_DIR || path.resolve(__dirname, "../shared/workspace");
+// Resolve per-project mailbox paths via ORCH_PROJECT env var
+// Falls back to legacy shared/mailbox for backwards compatibility
+const ORCH_PROJECT = process.env.ORCH_PROJECT;
+if (ORCH_PROJECT && (ORCH_PROJECT.includes("..") || ORCH_PROJECT.includes("/"))) {
+  console.error("Invalid ORCH_PROJECT value — must be a plain name, not a path");
+  process.exit(1);
+}
+const MAILBOX_DIR = process.env.MAILBOX_DIR ||
+  (ORCH_PROJECT
+    ? path.resolve(__dirname, `../shared/${ORCH_PROJECT}/mailbox`)
+    : path.resolve(__dirname, "../shared/mailbox"));
+const WORKSPACE_DIR = process.env.WORKSPACE_DIR ||
+  (ORCH_PROJECT
+    ? path.resolve(__dirname, `../shared/${ORCH_PROJECT}/workspace`)
+    : path.resolve(__dirname, "../shared/workspace"));
 
 // Ensure directories exist
 for (const dir of [

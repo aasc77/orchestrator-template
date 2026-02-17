@@ -5,12 +5,19 @@ __pycache__/
 
 # Runtime
 orchestrator/orchestrator.log
+
+# Per-project mailbox and workspace (created at runtime by start.sh)
+shared/*/mailbox/to_dev/*.json
+shared/*/mailbox/to_qa/*.json
+shared/*/workspace/*
+
+# Legacy single-project patterns (kept for backwards compat)
 shared/mailbox/to_dev/*.json
 shared/mailbox/to_qa/*.json
 shared/workspace/*
-!shared/workspace/.gitkeep
-!shared/mailbox/to_dev/.gitkeep
-!shared/mailbox/to_qa/.gitkeep
+
+# Keep gitkeep files
+!**/.gitkeep
 
 # Environment
 .env

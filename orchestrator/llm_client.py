@@ -96,6 +96,45 @@ Rules:
                 "reasoning": "Ollama connection failure",
             }
 
+    def decide_with_system(self, system_prompt: str, context: str) -> dict:
+        """Like decide() but with a custom system prompt."""
+        try:
+            prompt = context
+            if self.disable_thinking:
+                prompt = context + " /no_think"
+
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "system": system_prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.3,
+                        "num_predict": 4096,
+                    },
+                },
+                timeout=60,
+            )
+            response.raise_for_status()
+            result = response.json()
+            raw_text = result.get("response", "")
+
+            raw_text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL)
+            raw_text = raw_text.strip()
+
+            if "```json" in raw_text:
+                raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw_text:
+                raw_text = raw_text.split("```")[1].split("```")[0].strip()
+
+            return json.loads(raw_text)
+
+        except (json.JSONDecodeError, requests.RequestException) as e:
+            logger.error(f"LLM interpret failed: {e}")
+            return {"action": "reply", "text": "Sorry, I couldn't process that. Try a direct command or type 'help'."}
+
     def health_check(self) -> bool:
         """Check if Ollama is running and model is available."""
         try:
