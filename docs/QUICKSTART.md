@@ -50,7 +50,22 @@ projects/myproject/
     └── qa/CLAUDE.md         # QA agent instructions
 ```
 
-## 4. Configure Your Project
+## 4. Set Up Working Directories
+
+Each agent needs its own working directory. Dev writes code in one directory, QA tests in another.
+
+**Why two directories?** Dev and QA run as separate Claude Code sessions. Giving them separate directories prevents them from interfering with each other (e.g., Dev editing a file while QA is reading it). They communicate through a shared MCP mailbox, not through the filesystem.
+
+```bash
+# Example: Dev works in the main repo, QA gets a separate clone
+cd ~/Repositories
+git clone git@github.com:yourorg/my-app.git         # Dev's copy
+git clone git@github.com:yourorg/my-app.git my-app-qa  # QA's copy
+```
+
+You can also point both to the same directory if you prefer -- it works but can cause conflicts if both agents touch the same files simultaneously.
+
+## 5. Configure Your Project
 
 ### config.yaml
 
@@ -62,15 +77,15 @@ tmux:
 
 agents:
   dev:
-    working_dir: ~/Repositories/my-app        # Where Dev agent works (must exist)
+    working_dir: ~/Repositories/my-app        # Dev's repo clone (must exist)
     pane: orch.0                               # Don't change this
   qa:
-    working_dir: ~/Repositories/my-app-qa     # Where QA agent works (can be same as dev)
+    working_dir: ~/Repositories/my-app-qa     # QA's repo clone (must exist)
     pane: orch.1                               # Don't change this
 ```
 
 **Important:**
-- `working_dir` must point to existing directories. Dev and QA agents will open Claude Code sessions rooted there.
+- Both `working_dir` paths must exist before launching. Each agent opens a Claude Code session rooted there.
 - `session_name` must be unique if you run multiple projects simultaneously.
 - `pane` values (`orch.0`, `orch.1`) map to the tmux layout and should not be changed.
 
@@ -132,10 +147,16 @@ Add project context so agents know what they're working with.
 
 The more context you provide, the better the agents perform.
 
-## 5. Launch
+## 6. Launch
 
 ```bash
 ./scripts/start.sh myproject
+```
+
+To skip all Claude Code confirmation prompts (agents run fully autonomously):
+
+```bash
+./scripts/start.sh myproject --yolo
 ```
 
 You'll see pre-flight checks, then a tmux session with three panes:
@@ -162,7 +183,7 @@ You'll see pre-flight checks, then a tmux session with three panes:
 5. QA gets nudged, tests the work, calls `send_to_dev` with results
 6. The orchestrator decides: advance to next task (pass) or send back (fail)
 
-## 6. Monitor and Interact
+## 7. Monitor and Interact
 
 Click the **ORCH** pane (bottom) to interact with the orchestrator.
 
@@ -208,7 +229,7 @@ To reattach after detaching:
 tmux attach -t myproject
 ```
 
-## 7. Stop
+## 8. Stop
 
 ```bash
 ./scripts/stop.sh myproject
@@ -251,7 +272,7 @@ The orchestrator marks tasks as `stuck` after 5 failed attempts and prints `HUMA
 
 ### Dev says it wrote files but QA can't find them
 
-Make sure both agents' `working_dir` points to the right place. If Dev and QA work in different directories, Dev needs to commit/push and QA needs to pull -- or point both at the same directory.
+Dev and QA each work in their own `working_dir` (see step 4). They share files through the MCP workspace tools (`read_workspace_file`, `list_workspace`), not through the filesystem directly. If an agent needs to share a file, it should use the MCP tools. Alternatively, point both agents at the same directory -- but be aware of potential conflicts.
 
 ### MCP tools not available to agents
 
