@@ -17,7 +17,22 @@ Start Ollama (leave it running in a separate terminal or as a background service
 ollama serve
 ```
 
-## 2. Clone and Run Setup
+## 2. Set Up Working Directories
+
+Each agent needs its own working directory. Dev writes code in one, QA tests in the other.
+
+**Why two directories?** Dev and QA run as separate Claude Code sessions. Giving them separate directories prevents them from interfering with each other (e.g., Dev editing a file while QA is reading it). They communicate through a shared MCP mailbox, not through the filesystem.
+
+```bash
+# Example: Dev works in the main repo, QA gets a separate clone
+cd ~/Repositories
+git clone git@github.com:yourorg/my-app.git            # Dev's copy
+git clone git@github.com:yourorg/my-app.git my-app-qa   # QA's copy
+```
+
+You can also point both to the same directory if you prefer -- it works but can cause conflicts if both agents touch the same files simultaneously.
+
+## 3. Clone and Run Setup
 
 ```bash
 git clone <this-repo> my-orchestrator
@@ -33,7 +48,7 @@ Setup will:
 - Configure the MCP bridge with the correct absolute path
 - Run a quick self-test to verify the bridge works
 
-## 3. Create Your Project
+## 4. Create Your Project
 
 ```bash
 cp -r projects/example projects/myproject
@@ -50,24 +65,11 @@ projects/myproject/
     └── qa/CLAUDE.md         # QA agent instructions
 ```
 
-## 4. Set Up Working Directories
-
-Each agent needs its own working directory. Dev writes code in one directory, QA tests in another.
-
-**Why two directories?** Dev and QA run as separate Claude Code sessions. Giving them separate directories prevents them from interfering with each other (e.g., Dev editing a file while QA is reading it). They communicate through a shared MCP mailbox, not through the filesystem.
-
-```bash
-# Example: Dev works in the main repo, QA gets a separate clone
-cd ~/Repositories
-git clone git@github.com:yourorg/my-app.git         # Dev's copy
-git clone git@github.com:yourorg/my-app.git my-app-qa  # QA's copy
-```
-
-You can also point both to the same directory if you prefer -- it works but can cause conflicts if both agents touch the same files simultaneously.
-
 ## 5. Configure Your Project
 
 ### config.yaml
+
+Point the agents at the working directories you created in step 2:
 
 ```yaml
 project: myproject                    # Identifier (used in logs and prompts)
@@ -77,10 +79,10 @@ tmux:
 
 agents:
   dev:
-    working_dir: ~/Repositories/my-app        # Dev's repo clone (must exist)
+    working_dir: ~/Repositories/my-app        # Dev's repo clone from step 2
     pane: orch.0                               # Don't change this
   qa:
-    working_dir: ~/Repositories/my-app-qa     # QA's repo clone (must exist)
+    working_dir: ~/Repositories/my-app-qa     # QA's repo clone from step 2
     pane: orch.1                               # Don't change this
 ```
 
@@ -272,7 +274,7 @@ The orchestrator marks tasks as `stuck` after 5 failed attempts and prints `HUMA
 
 ### Dev says it wrote files but QA can't find them
 
-Dev and QA each work in their own `working_dir` (see step 4). They share files through the MCP workspace tools (`read_workspace_file`, `list_workspace`), not through the filesystem directly. If an agent needs to share a file, it should use the MCP tools. Alternatively, point both agents at the same directory -- but be aware of potential conflicts.
+Dev and QA each work in their own `working_dir` (see step 2). They share files through the MCP workspace tools (`read_workspace_file`, `list_workspace`), not through the filesystem directly. If an agent needs to share a file, it should use the MCP tools. Alternatively, point both agents at the same directory -- but be aware of potential conflicts.
 
 ### MCP tools not available to agents
 
