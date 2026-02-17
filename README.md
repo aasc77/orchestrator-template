@@ -103,34 +103,37 @@ vi projects/myproject/agents/qa/CLAUDE.md  # Add test environment for QA
 
 ## Adding a New Project
 
-The fastest way to add a project is the interactive wizard:
-
 ```bash
 ./scripts/new-project.sh
 ```
 
-It asks for the folder name in `~/Repositories/`, derives sensible defaults, handles QA directory creation (clone or empty), and generates all config files with correct pane values and smoke-test tasks.
+The wizard handles everything: locates your dev repo, creates the QA directory (clone or empty), and generates `config.yaml`, `tasks.json`, and agent `CLAUDE.md` files with correct pane values and smoke-test tasks.
 
-You can also pass the folder name as an argument to skip the first prompt:
+Pass the folder name as an argument to skip the first prompt:
 
 ```bash
 ./scripts/new-project.sh my-app
 ```
 
+After the wizard finishes, customize the generated files:
+1. Replace smoke-test tasks in `projects/<name>/tasks.json` with your real work
+2. Fill in the `<!-- TODO -->` placeholders in `projects/<name>/agents/dev/CLAUDE.md` and `qa/CLAUDE.md`
+3. Launch with `./scripts/start.sh <name>`
+
+Multiple projects can run simultaneously (each gets its own tmux session and mailbox).
+
 <details>
 <summary>Manual setup (without wizard)</summary>
 
 ```bash
-# 1. Set up working directories
 cd ~/Repositories
 git clone git@github.com:yourorg/new-project.git              # Dev's copy
 git clone git@github.com:yourorg/new-project.git new-project-qa  # QA's copy
-
-# 2. Create project config
-cp -r projects/example projects/<name>
 ```
 
-</details>
+```bash
+cp -r projects/example projects/<name>
+```
 
 Edit `projects/<name>/config.yaml` to point at your working directories:
 
@@ -149,7 +152,7 @@ agents:
 
 Then add tasks to `projects/<name>/tasks.json` and launch with `./scripts/start.sh <name>`.
 
-Multiple projects can run simultaneously (each gets its own tmux session and mailbox).
+</details>
 
 ## Configuration
 
