@@ -3,7 +3,7 @@
 Automated Dev/QA workflow: Dev codes, QA tests, local AI orchestrator routes decisions.
 Supports multiple projects from a single installation.
 
-![Demo: Dev, QA, and Orchestrator working together](docs/images/demo.png)
+![Demo: Dev, QA, and Orchestrator working together](docs/images/demo.gif)
 
 ## Architecture
 
