@@ -136,10 +136,26 @@ echo ""
 echo "  Will create:"
 echo "    projects/$PROJECT_KEY/config.yaml"
 echo "    projects/$PROJECT_KEY/tasks.json"
-echo "    $DEV_DIR/CLAUDE.md"
-echo "    $QA_DIR/CLAUDE.md"
 echo "    shared/$PROJECT_KEY/mailbox/{to_dev,to_qa}/"
 echo "    shared/$PROJECT_KEY/workspace/"
+if [[ -f "$DEV_DIR/CLAUDE.md" ]]; then
+    if grep -q "agent-bridge" "$DEV_DIR/CLAUDE.md" 2>/dev/null; then
+        echo "    $DEV_DIR/CLAUDE.md  ${DIM}(exists, MCP already present -- skip)${RESET}"
+    else
+        echo "    $DEV_DIR/CLAUDE.md  ${YELLOW}(exists -- will append MCP section)${RESET}"
+    fi
+else
+    echo "    $DEV_DIR/CLAUDE.md  ${DIM}(new)${RESET}"
+fi
+if [[ -f "$QA_DIR/CLAUDE.md" ]]; then
+    if grep -q "agent-bridge" "$QA_DIR/CLAUDE.md" 2>/dev/null; then
+        echo "    $QA_DIR/CLAUDE.md   ${DIM}(exists, MCP already present -- skip)${RESET}"
+    else
+        echo "    $QA_DIR/CLAUDE.md   ${YELLOW}(exists -- will append MCP section)${RESET}"
+    fi
+else
+    echo "    $QA_DIR/CLAUDE.md   ${DIM}(new)${RESET}"
+fi
 echo "  ${BOLD}=================================${RESET}"
 echo ""
 
@@ -217,22 +233,15 @@ cat > "$PROJECT_DIR/tasks.json" <<EOF
 EOF
 info "Created projects/$PROJECT_KEY/tasks.json"
 
-# --- Dev CLAUDE.md (written to dev working directory) ---
-cat > "$DEV_DIR/CLAUDE.md" <<'DEVEOF'
-# Dev Agent
+# --- MCP protocol snippets (appended to existing CLAUDE.md or written fresh) ---
 
-You are the **DEVELOPER** agent in an automated Dev/QA workflow with an AI orchestrator.
-
----
-
-## Project Context
-
-<!-- TODO: Add your project-specific context here -->
-<!-- Examples: tech stack, architecture, key URLs, deployment commands, DB schemas, etc. -->
+DEV_MCP_SECTION=$(cat <<'DEVMCP'
 
 ---
 
 ## Communication Protocol (MCP-Based)
+
+You are the **DEVELOPER** agent in an automated Dev/QA workflow with an AI orchestrator.
 
 ### MCP Tools Available
 You have these tools from the `agent-bridge` MCP server:
@@ -266,29 +275,17 @@ You have these tools from the `agent-bridge` MCP server:
 - Be specific about expected behavior for each acceptance criterion
 - If a task is ambiguous, make reasonable assumptions and document them
 - Code should be committed/deployed before sending to QA
-DEVEOF
+DEVMCP
+)
 
-# Substitute project name into the header
-sed -i '' "s/^# Dev Agent$/# Dev Agent -- $PROJECT_NAME/" "$DEV_DIR/CLAUDE.md"
-info "Created $DEV_DIR/CLAUDE.md"
-
-# --- QA CLAUDE.md (written to QA working directory) ---
-cat > "$QA_DIR/CLAUDE.md" <<'QAEOF'
-# QA Agent -- Black-Box Testing
-
-You are the **QA Agent** in an automated Dev/QA workflow with an AI orchestrator.
-You do BLACK-BOX testing only -- test behavior, not implementation.
-
----
-
-## Test Environment
-
-<!-- TODO: Add your project-specific test context here -->
-<!-- Examples: key URLs, test credentials, API endpoints, test commands, known bugs, etc. -->
+QA_MCP_SECTION=$(cat <<'QAMCP'
 
 ---
 
 ## Communication Protocol (MCP-Based)
+
+You are the **QA Agent** in an automated Dev/QA workflow with an AI orchestrator.
+You do BLACK-BOX testing only -- test behavior, not implementation.
 
 ### MCP Tools Available
 You have these tools from the `agent-bridge` MCP server:
@@ -347,11 +344,46 @@ For each bug in the `bugs` array:
 - Be thorough but fair -- don't block on cosmetic issues
 - If you can't test because setup instructions are missing, report THAT as a bug
 - If all acceptance criteria pass, mark PASS even with minor cosmetic findings
-QAEOF
+QAMCP
+)
 
-# Substitute project name into the header
-sed -i '' "s/^# QA Agent -- Black-Box Testing$/# QA Agent -- $PROJECT_NAME/" "$QA_DIR/CLAUDE.md"
-info "Created $QA_DIR/CLAUDE.md"
+# --- Dev CLAUDE.md ---
+if [[ -f "$DEV_DIR/CLAUDE.md" ]]; then
+    if grep -q "agent-bridge" "$DEV_DIR/CLAUDE.md" 2>/dev/null; then
+        info "Dev CLAUDE.md already has MCP protocol -- skipped"
+    else
+        echo "$DEV_MCP_SECTION" >> "$DEV_DIR/CLAUDE.md"
+        success "Appended MCP protocol to existing $DEV_DIR/CLAUDE.md"
+    fi
+else
+    cat > "$DEV_DIR/CLAUDE.md" <<EOF
+# Dev Agent -- $PROJECT_NAME
+
+<!-- TODO: Add your project-specific context here -->
+<!-- Examples: tech stack, architecture, key URLs, deployment commands, DB schemas, etc. -->
+${DEV_MCP_SECTION}
+EOF
+    info "Created $DEV_DIR/CLAUDE.md"
+fi
+
+# --- QA CLAUDE.md ---
+if [[ -f "$QA_DIR/CLAUDE.md" ]]; then
+    if grep -q "agent-bridge" "$QA_DIR/CLAUDE.md" 2>/dev/null; then
+        info "QA CLAUDE.md already has MCP protocol -- skipped"
+    else
+        echo "$QA_MCP_SECTION" >> "$QA_DIR/CLAUDE.md"
+        success "Appended MCP protocol to existing $QA_DIR/CLAUDE.md"
+    fi
+else
+    cat > "$QA_DIR/CLAUDE.md" <<EOF
+# QA Agent -- $PROJECT_NAME
+
+<!-- TODO: Add your project-specific test context here -->
+<!-- Examples: key URLs, test credentials, API endpoints, test commands, known bugs, etc. -->
+${QA_MCP_SECTION}
+EOF
+    info "Created $QA_DIR/CLAUDE.md"
+fi
 
 # Clear cleanup markers on success
 CLEANUP_PROJECT_DIR=""
@@ -365,8 +397,8 @@ success "Done!"
 echo ""
 echo "  ${BOLD}Next steps:${RESET}"
 echo "    1. Edit tasks:    ${DIM}vi $ROOT_DIR/projects/$PROJECT_KEY/tasks.json${RESET}"
-echo "    2. Customize Dev: ${DIM}vi $DEV_DIR/CLAUDE.md${RESET}"
-echo "    3. Customize QA:  ${DIM}vi $QA_DIR/CLAUDE.md${RESET}"
+echo "    2. Review Dev:    ${DIM}vi $DEV_DIR/CLAUDE.md${RESET}"
+echo "    3. Review QA:     ${DIM}vi $QA_DIR/CLAUDE.md${RESET}"
 echo "    4. Launch:        ${DIM}$ROOT_DIR/scripts/start.sh $PROJECT_KEY${RESET}"
 echo "    5. Launch (auto): ${DIM}$ROOT_DIR/scripts/start.sh $PROJECT_KEY --yolo${RESET}"
 echo ""

@@ -553,14 +553,13 @@ def main():
     else:
         logger.warning(f"tmux session '{tmux_session}' not found — nudges will be skipped")
 
-    # Assign first task
+    # Assign first task (if any)
     idx, first_task = get_current_task()
     if first_task:
         logger.info(f"Starting with task: {first_task['title']}")
         assign_task_to_dev(first_task)
     else:
-        logger.info("No pending tasks found")
-        return
+        logger.info("No pending tasks found — waiting for new tasks or commands")
 
     # Start interactive command reader
     cmd_thread = threading.Thread(target=_stdin_reader, daemon=True)
@@ -601,11 +600,10 @@ def main():
                 all_done = all(
                     t["status"] in ("completed", "stuck") for t in tasks
                 )
-                if all_done:
+                if all_done and any(t["status"] == "completed" for t in tasks):
                     completed = sum(1 for t in tasks if t["status"] == "completed")
                     stuck = sum(1 for t in tasks if t["status"] == "stuck")
-                    logger.info(f"All tasks processed: {completed} completed, {stuck} stuck")
-                    break
+                    logger.info(f"All tasks processed: {completed} completed, {stuck} stuck — still polling")
 
             time.sleep(poll_interval)
 
