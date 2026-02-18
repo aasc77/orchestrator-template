@@ -93,6 +93,73 @@ vi my-orchestrator/projects/myproject/config.yaml
 
 </details>
 
+## Using with an Existing Project
+
+If you already have a repo with a `CLAUDE.md`, the wizard won't overwrite it. It appends only the MCP communication section your agents need to talk to each other.
+
+```bash
+my-orchestrator/scripts/new-project.sh my-existing-app
+```
+
+The wizard will:
+1. Find your existing dev directory at `~/Repositories/my-existing-app`
+2. Create the QA directory (clone or empty) if it doesn't exist
+3. Show what it will do to each `CLAUDE.md`:
+   - **"exists -- will append MCP section"**: Your file is preserved, MCP protocol added to the end
+   - **"exists, MCP already present -- skip"**: Nothing changes (safe to re-run)
+   - **"new"**: Full template created
+4. Create the orchestrator config and shared mailbox directories
+
+### Tasks are optional
+
+You don't need to pre-define tasks. The wizard creates smoke-test tasks by default, but you can clear them and drive the workflow manually:
+
+```json
+{
+  "project": "my_existing_app",
+  "tasks": []
+}
+```
+
+Then just launch and talk directly to the Dev agent in its tmux pane:
+- "Grab issue #42 from GitHub and fix it"
+- "Refactor the auth middleware to use JWT"
+- "Run the test suite and fix any failures"
+
+The Dev agent implements the work, calls `send_to_qa`, and the orchestrator routes messages between agents automatically. The ORCH pane stays alive for interactive commands and message routing.
+
+### What gets appended to your CLAUDE.md
+
+For the **Dev** agent, this block is appended:
+
+```markdown
+---
+
+## Communication Protocol (MCP-Based)
+
+You are the **DEVELOPER** agent in an automated Dev/QA workflow with an AI orchestrator.
+
+### MCP Tools Available
+You have these tools from the `agent-bridge` MCP server:
+
+- **`send_to_qa`** -- Notify QA that code is ready for testing
+- **`check_messages`** -- Check your mailbox (role: "dev")
+- **`list_workspace`** / **`read_workspace_file`** -- Shared workspace access
+
+### Workflow
+1. Receive a task via `check_messages` or direct instruction
+2. Implement the feature/fix
+3. Call `send_to_qa` with summary, files changed, and test instructions
+4. Call `check_messages` to get QA results
+5. Fix bugs if needed, repeat
+```
+
+For the **QA** agent, a similar block is appended with `send_to_dev` and `check_messages` (role: "qa").
+
+The full snippets are in `scripts/new-project.sh` if you need to add them manually.
+
+---
+
 ## 4. Customize Your Project
 
 The wizard generates working defaults, but you'll want to customize these files for your actual project.

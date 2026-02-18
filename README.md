@@ -163,6 +163,82 @@ Then add tasks to `projects/<name>/tasks.json` and launch with `my-orchestrator/
 
 </details>
 
+## Adding an Existing Project
+
+Already have a repo with its own `CLAUDE.md`? The wizard is safe to run -- it won't overwrite your files:
+
+```bash
+my-orchestrator/scripts/new-project.sh my-existing-app
+```
+
+The wizard detects existing files and handles them:
+
+| What it finds | What it does |
+|---|---|
+| Dev directory exists | Uses it as-is (no changes) |
+| `CLAUDE.md` exists, no MCP section | Appends only the MCP communication protocol to the end |
+| `CLAUDE.md` exists, already has MCP | Skips entirely (no changes) |
+| No `CLAUDE.md` | Creates the full template |
+
+The confirmation screen shows exactly what will happen before you proceed:
+
+```
+Will create:
+  projects/my-existing-app/config.yaml
+  projects/my-existing-app/tasks.json
+  shared/my-existing-app/mailbox/{to_dev,to_qa}/
+  shared/my-existing-app/workspace/
+  ~/Repositories/my-existing-app/CLAUDE.md      (exists -- will append MCP section)
+  ~/Repositories/my-existing-app_qa/CLAUDE.md   (new)
+```
+
+Running the wizard again is safe -- it's idempotent.
+
+### Using without pre-defined tasks
+
+You don't need to populate `tasks.json` to use the orchestrator. The task system is optional. You can leave the task list empty and drive the workflow manually:
+
+1. Launch: `my-orchestrator/scripts/start.sh my-existing-app`
+2. Click the **DEV** pane and tell the agent what to work on (e.g., "grab issue #42 from GitHub and fix it")
+3. Dev implements and calls `send_to_qa` -- the orchestrator routes it to QA automatically
+4. QA tests and calls `send_to_dev` -- the orchestrator routes results back
+
+The orchestrator stays alive with an empty task list, polls the mailbox, routes messages between agents, and accepts interactive commands in the ORCH pane.
+
+### Custom project key
+
+The wizard derives the project key from the folder name, but for existing projects you may want a shorter key. Create the project manually:
+
+```bash
+mkdir -p my-orchestrator/projects/myapp
+mkdir -p my-orchestrator/shared/myapp/mailbox/{to_dev,to_qa}
+mkdir -p my-orchestrator/shared/myapp/workspace
+```
+
+```yaml
+# my-orchestrator/projects/myapp/config.yaml
+project: myapp
+tmux:
+  session_name: myapp
+agents:
+  dev:
+    working_dir: /full/path/to/your-existing-repo
+    pane: orch.0
+  qa:
+    working_dir: /full/path/to/your-existing-repo_qa
+    pane: orch.1
+```
+
+```json
+// my-orchestrator/projects/myapp/tasks.json
+{
+  "project": "myapp",
+  "tasks": []
+}
+```
+
+Then append the MCP protocol to your existing CLAUDE.md (see `docs/QUICKSTART.md` for the snippet) and launch with `start.sh myapp`.
+
 ## Configuration
 
 ### Project Config (`projects/<name>/config.yaml`)
