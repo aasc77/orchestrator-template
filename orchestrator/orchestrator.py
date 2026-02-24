@@ -566,7 +566,11 @@ Data: {json.dumps(event_data, indent=2)}
 
 
 def create_task_branches(task_id: str):
-    """Create red/green/blue branches for a new task in each worktree."""
+    """Create red/green/blue branches for a new task in each worktree.
+
+    Always branches from the default branch (main) to ensure a clean start.
+    Deletes stale branches from previous runs before creating.
+    """
     if not repo_dir:
         return
     agents_cfg = config.get("agents", {})
@@ -579,20 +583,19 @@ def create_task_branches(task_id: str):
         wt_dir = agents_cfg.get(agent, {}).get("working_dir", "")
         if not wt_dir:
             continue
-        # Check if branch already exists
+        # First checkout the default branch to have a clean base
+        run_git_command(wt_dir, "checkout", default_branch)
+        # Delete stale branch from previous runs if it exists
         exists, _ = run_git_command(wt_dir, "rev-parse", "--verify", branch)
         if exists:
-            success, output = run_git_command(wt_dir, "checkout", branch)
-            if success:
-                logger.info(f"Checked out existing {branch} in {agent} worktree")
-            else:
-                logger.warning(f"Failed to checkout {branch} in {agent}: {output}")
+            run_git_command(wt_dir, "branch", "-D", branch)
+            logger.info(f"Deleted stale {branch} in {agent} worktree")
+        # Create fresh branch from default branch
+        success, output = run_git_command(wt_dir, "checkout", "-b", branch)
+        if success:
+            logger.info(f"Created {branch} from {default_branch} in {agent} worktree")
         else:
-            success, output = run_git_command(wt_dir, "checkout", "-b", branch)
-            if success:
-                logger.info(f"Created {branch} in {agent} worktree")
-            else:
-                logger.warning(f"Failed to create {branch} in {agent}: {output}")
+            logger.warning(f"Failed to create {branch} in {agent}: {output}")
 
 
 def assign_task_to_qa(task: dict):
