@@ -168,6 +168,36 @@ echo ""
 # ─── Phase 1: Gather folder name ─────────────────────────────────────────────
 FOLDER_NAME="${1:-}"
 
+if [[ -z "$FOLDER_NAME" && "$PROJECT_MODE" == "existing" ]]; then
+    # Interactive picker: list git repos in ~/Repositories/
+    REPO_DIRS=()
+    while IFS= read -r d; do
+        if [[ -d "$d/.git" ]]; then
+            REPO_DIRS+=("$(basename "$d")")
+        fi
+    done < <(find "$REPOS_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
+
+    if [[ ${#REPO_DIRS[@]} -eq 0 ]]; then
+        error "No git repos found in $REPOS_DIR"
+        exit 1
+    fi
+
+    echo "  ${BOLD}Git repos in ~/Repositories/:${RESET}"
+    echo ""
+    for i in "${!REPO_DIRS[@]}"; do
+        printf "    %3d) %s\n" "$((i + 1))" "${REPO_DIRS[$i]}"
+    done
+    echo ""
+    read -r -p "  Select repo number: " REPO_SELECTION
+
+    if [[ "$REPO_SELECTION" =~ ^[0-9]+$ ]] && (( REPO_SELECTION >= 1 && REPO_SELECTION <= ${#REPO_DIRS[@]} )); then
+        FOLDER_NAME="${REPO_DIRS[$((REPO_SELECTION - 1))]}"
+    else
+        error "Invalid selection."
+        exit 1
+    fi
+fi
+
 while true; do
     if [[ -z "$FOLDER_NAME" ]]; then
         read -r -p "  Folder name (in ~/Repositories/): " FOLDER_NAME
@@ -183,6 +213,15 @@ while true; do
         warn "Invalid name: only letters, numbers, hyphens, and underscores allowed."
         FOLDER_NAME=""
         continue
+    fi
+
+    # Existing mode: folder must already exist with a git repo
+    if [[ "$PROJECT_MODE" == "existing" ]]; then
+        if [[ ! -d "$REPOS_DIR/$FOLDER_NAME/.git" ]]; then
+            warn "Folder '$FOLDER_NAME' does not exist or is not a git repo in ~/Repositories/"
+            FOLDER_NAME=""
+            continue
+        fi
     fi
 
     break
@@ -250,6 +289,112 @@ fi
 
 # Detect default branch name (existing repos may use master or other names)
 DEFAULT_BRANCH=$(git -C "$REPO_DIR" symbolic-ref --short HEAD 2>/dev/null || echo "main")
+
+# ─── Phase 3b: File discovery (existing projects only) ──────────────────────
+CHAR_FILES=()
+if [[ "$PROJECT_MODE" == "existing" ]]; then
+    echo ""
+    info "Discovering source files for characterization..."
+
+    # Common find exclusions
+    FIND_EXCLUDES=(
+        -not -path "*/node_modules/*" -not -path "*/__pycache__/*"
+        -not -path "*/venv/*" -not -path "*/.venv*/*"
+        -not -path "*/.worktrees/*" -not -path "*/.next/*"
+        -not -path "*/dist/*" -not -path "*/build/*"
+        -not -path "*/.playwright*/*" -not -path "*/.qa-workspace/*"
+        -not -path "*/test*/*" -not -name "test_*" -not -name "*_test.*"
+        -not -name "conftest.py" -not -name "setup.py"
+    )
+    FIND_EXTENSIONS=( \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.tsx" -o -name "*.jsx" \) )
+
+    # Step 1: Discover folders that contain source files
+    SRC_FOLDERS=()
+    SRC_FOLDER_COUNTS=()
+    # Root-level files
+    ROOT_COUNT=$(find "$REPO_DIR" -maxdepth 1 -type f "${FIND_EXTENSIONS[@]}" "${FIND_EXCLUDES[@]}" 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$ROOT_COUNT" -gt 0 ]]; then
+        SRC_FOLDERS+=(".")
+        SRC_FOLDER_COUNTS+=("$ROOT_COUNT")
+    fi
+    # Subdirectories
+    while IFS= read -r folder; do
+        count=$(find "$folder" -type f "${FIND_EXTENSIONS[@]}" "${FIND_EXCLUDES[@]}" 2>/dev/null | wc -l | tr -d ' ')
+        if [[ "$count" -gt 0 ]]; then
+            REL="${folder#$REPO_DIR/}"
+            SRC_FOLDERS+=("$REL")
+            SRC_FOLDER_COUNTS+=("$count")
+        fi
+    done < <(find "$REPO_DIR" -mindepth 1 -maxdepth 1 -type d \
+        -not -name "node_modules" -not -name "__pycache__" \
+        -not -name "venv" -not -name ".venv*" \
+        -not -name ".worktrees" -not -name ".next" \
+        -not -name "dist" -not -name "build" \
+        -not -name ".playwright*" -not -name ".qa-workspace" \
+        -not -name ".git" -not -name "test*" \
+        2>/dev/null | sort)
+
+    if [[ ${#SRC_FOLDERS[@]} -eq 0 ]]; then
+        error "No source files (.py, .js, .ts, .tsx, .jsx) found in $REPO_DIR"
+        exit 1
+    fi
+
+    echo ""
+    echo "  ${BOLD}Folders with source files:${RESET}"
+    echo ""
+    TOTAL_FILES=0
+    for i in "${!SRC_FOLDERS[@]}"; do
+        printf "    %3d) %-40s (%s files)\n" "$((i + 1))" "${SRC_FOLDERS[$i]}/" "${SRC_FOLDER_COUNTS[$i]}"
+        TOTAL_FILES=$((TOTAL_FILES + SRC_FOLDER_COUNTS[$i]))
+    done
+    echo ""
+    echo "  ${DIM}Total: $TOTAL_FILES source files across ${#SRC_FOLDERS[@]} folders${RESET}"
+    echo ""
+    echo "  Enter folder numbers (comma-separated), or 'a' for all:"
+    read -r -p "  > " FOLDER_SELECTION
+
+    # Step 2: Collect files from selected folders
+    SELECTED_DIRS=()
+    if [[ "$FOLDER_SELECTION" == "a" || "$FOLDER_SELECTION" == "A" ]]; then
+        SELECTED_DIRS=("${SRC_FOLDERS[@]}")
+    else
+        IFS=',' read -ra SELECTIONS <<< "$FOLDER_SELECTION"
+        for sel in "${SELECTIONS[@]}"; do
+            sel=$(echo "$sel" | tr -d ' ')
+            if [[ "$sel" =~ ^[0-9]+$ ]] && (( sel >= 1 && sel <= ${#SRC_FOLDERS[@]} )); then
+                SELECTED_DIRS+=("${SRC_FOLDERS[$((sel - 1))]}")
+            else
+                warn "Ignoring invalid selection: $sel"
+            fi
+        done
+    fi
+
+    if [[ ${#SELECTED_DIRS[@]} -eq 0 ]]; then
+        error "No folders selected. Aborting."
+        exit 1
+    fi
+
+    for dir in "${SELECTED_DIRS[@]}"; do
+        if [[ "$dir" == "." ]]; then
+            search_path="$REPO_DIR"
+            depth_args=(-maxdepth 1)
+        else
+            search_path="$REPO_DIR/$dir"
+            depth_args=()
+        fi
+        while IFS= read -r line; do
+            CHAR_FILES+=("$line")
+        done < <(find "$search_path" "${depth_args[@]}" -type f "${FIND_EXTENSIONS[@]}" "${FIND_EXCLUDES[@]}" 2>/dev/null | sort)
+    done
+
+    if [[ ${#CHAR_FILES[@]} -eq 0 ]]; then
+        error "No source files found in selected folders. Aborting."
+        exit 1
+    fi
+
+    echo ""
+    info "Selected ${#CHAR_FILES[@]} file(s) across ${#SELECTED_DIRS[@]} folder(s)"
+fi
 
 # Ensure .worktrees/ is in .gitignore (for existing repos that skipped git init)
 if [[ -f "$REPO_DIR/.gitignore" ]]; then
@@ -345,6 +490,7 @@ mkdir -p "$SHARED_DIR/workspace"
 cat > "$PROJECT_DIR/config.yaml" <<EOF
 # Project: $PROJECT_NAME
 project: $PROJECT_NAME
+mode: $PROJECT_MODE
 
 tmux:
   session_name: $PROJECT_KEY
@@ -365,7 +511,44 @@ EOF
 info "Created projects/$PROJECT_KEY/config.yaml"
 
 # --- tasks.json ---
-cat > "$PROJECT_DIR/tasks.json" <<EOF
+if [[ "$PROJECT_MODE" == "existing" && ${#CHAR_FILES[@]} -gt 0 ]]; then
+    # Generate characterization tasks from selected files
+    {
+        echo "{"
+        echo "  \"project\": \"$PROJECT_NAME\","
+        echo "  \"tasks\": ["
+        TASK_NUM=0
+        LAST_IDX=$(( ${#CHAR_FILES[@]} - 1 ))
+        for char_file in "${CHAR_FILES[@]}"; do
+            TASK_NUM=$((TASK_NUM + 1))
+            REL_PATH="${char_file#$REPO_DIR/}"
+            COMMA=","
+            if [[ $((TASK_NUM - 1)) -eq $LAST_IDX ]]; then
+                COMMA=""
+            fi
+            cat <<TASKEOF
+    {
+      "id": "char-$TASK_NUM",
+      "title": "Characterize $REL_PATH",
+      "description": "Write characterization tests for $REL_PATH. Read the source file from your worktree, identify all public functions/classes, then write tests that PASS against the current implementation.",
+      "acceptance_criteria": [
+        "Test file exists",
+        "Tests cover all public functions/classes",
+        "All tests PASS against current code"
+      ],
+      "source_file": "$REL_PATH",
+      "status": "pending",
+      "attempts": 0,
+      "max_attempts": 5
+    }$COMMA
+TASKEOF
+        done
+        echo "  ]"
+        echo "}"
+    } > "$PROJECT_DIR/tasks.json"
+    info "Created projects/$PROJECT_KEY/tasks.json (${#CHAR_FILES[@]} characterization tasks)"
+else
+    cat > "$PROJECT_DIR/tasks.json" <<EOF
 {
   "project": "$PROJECT_NAME",
   "tasks": [
@@ -387,7 +570,8 @@ cat > "$PROJECT_DIR/tasks.json" <<EOF
   ]
 }
 EOF
-info "Created projects/$PROJECT_KEY/tasks.json"
+    info "Created projects/$PROJECT_KEY/tasks.json"
+fi
 
 # --- MCP protocol snippets (appended to existing CLAUDE.md or written fresh) ---
 
@@ -501,17 +685,71 @@ You have these tools from the `agent-bridge` MCP server:
 3. Review the implementation and its tests
 4. Refactor: improve DRY, naming, magic strings, documentation, type hints
 5. Run the test suite to verify tests still pass
-6. **Commit your changes**: `git add . && git commit -m "blue: <description>"`
-7. Call `send_refactor_complete` with status and summary
+6. Run `/review` to scan for security, performance, and quality issues
+7. If `/review` finds **critical or major** issues that require functional changes:
+   - Do NOT fix them yourself -- report `status: "fail"` with the findings in `issues`
+   - The orchestrator will route them back to Dev for fixing
+8. If `/review` is clean or only has minor/cosmetic findings:
+   - **Commit your changes**: `git add . && git commit -m "blue: <description>"`
+   - Call `send_refactor_complete` with `status: "pass"` and include any minor findings in summary
 
 ### Rules
 - ALWAYS commit your changes BEFORE calling send_refactor_complete
 - NEVER change functional behavior
 - NEVER modify test files
 - Run tests BEFORE reporting completion
+- Run `/review` BEFORE committing -- only safe refactoring fixes (naming, DRY, docs) are yours to make
+- Security/performance issues that need functional changes go back to Dev via `status: "fail"`
 - Focus on code quality: DRY, naming, extracting constants, documentation
 - If unsure whether a change is safe, skip it
 REFMCP
+
+# Override QA MCP section for characterization mode
+if [[ "$PROJECT_MODE" == "existing" ]]; then
+IFS= read -r -d '' QA_MCP_SECTION <<'QAMCP_CHAR' || true
+
+---
+
+## Communication Protocol (MCP-Based)
+
+You are the **QA Agent** (CHARACTERIZATION) in an automated workflow with an AI orchestrator.
+You write PASSING tests that document the existing behavior of legacy code.
+
+### MCP Tools Available
+You have these tools from the `agent-bridge` MCP server:
+
+- **`send_to_dev`** -- Send test results back to Dev
+  - `status`: `"pass"`, `"fail"`, or `"partial"`
+  - `summary`: Overall test results summary
+  - `bugs`: Array of bug objects (empty if pass)
+  - `tests_run`: Description of what you tested
+
+- **`check_messages`** -- Check your mailbox for new work
+  - `role`: Always use `"qa"`
+
+### Important: File Access
+- **DO NOT use `list_workspace` or `read_workspace_file`** -- the shared workspace is not used in this mode
+- All source files are in your **current working directory** (your worktree)
+- Use your normal file reading tools to read source files directly
+
+### Workflow
+1. Receive a task via `check_messages` with role `"qa"`
+2. Read the `source_file` from the task message **directly from your working directory**
+3. Identify all public functions, classes, and key behaviors
+4. Write characterization tests that PASS against the existing code
+5. Run tests to confirm they PASS (the code already exists!)
+6. **Commit your tests**: `git add . && git commit -m "red: characterize <file>"`
+7. Call `send_to_dev` with status "pass", summary, and tests_run
+
+### Rules
+- ALWAYS commit your tests BEFORE calling send_to_dev
+- Only write tests, NEVER write implementation code
+- Tests MUST PASS before handoff (characterization, not TDD)
+- Use pytest for Python projects
+- Add `# TODO:` comments for missing standards (e.g., type hints, docstrings)
+- Be thorough: test happy path, edge cases, and error conditions
+QAMCP_CHAR
+fi
 
 # Extract role prompts from selected prompt file
 QA_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "qa_agent/CLAUDE.md")

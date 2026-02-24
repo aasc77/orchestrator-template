@@ -80,6 +80,7 @@ for key, val in project_config.items():
 mailbox_dir = str(root_dir / "shared" / args.project / "mailbox")
 tasks_path = project_dir / "tasks.json"
 repo_dir = config.get("repo_dir", "")
+project_mode = config.get("mode", "new")
 
 # --- Setup Logging ---
 logging.basicConfig(
@@ -184,11 +185,25 @@ def git_merge_branch(worktree_path: str, source_branch: str) -> tuple[bool, str]
 def git_merge_into_default(repo_path: str, source_branch: str) -> tuple[bool, str]:
     """Merge a branch into the default branch in the main repo directory.
 
+    Stashes any uncommitted changes before checkout to prevent
+    'untracked working tree files would be overwritten' errors.
+
     Returns (success, output).
     """
+    # Stash any uncommitted changes (including untracked files)
+    stashed = False
+    _, status_output = run_git_command(repo_path, "status", "--porcelain")
+    if status_output.strip():
+        success, stash_output = run_git_command(repo_path, "stash", "push", "--include-untracked", "-m", f"orchestrator-auto-stash-before-{source_branch}")
+        if success and "No local changes" not in stash_output:
+            stashed = True
+            logger.info(f"Stashed uncommitted changes in {repo_path}")
+
     # Ensure we're on the default branch
     success, output = run_git_command(repo_path, "checkout", default_branch)
     if not success:
+        if stashed:
+            run_git_command(repo_path, "stash", "pop")
         return False, f"Failed to checkout {default_branch}: {output}"
 
     success, output = run_git_command(repo_path, "merge", source_branch, "--no-edit")
@@ -196,9 +211,38 @@ def git_merge_into_default(repo_path: str, source_branch: str) -> tuple[bool, st
         if "CONFLICT" in output or "conflict" in output.lower():
             logger.error(f"Merge conflict merging {source_branch} into {default_branch}")
             run_git_command(repo_path, "merge", "--abort")
+            if stashed:
+                run_git_command(repo_path, "stash", "pop")
             return False, f"MERGE CONFLICT: {output}"
+        if stashed:
+            run_git_command(repo_path, "stash", "pop")
         return False, output
+
+    # Merge succeeded -- drop the stash (merged content supersedes it)
+    if stashed:
+        run_git_command(repo_path, "stash", "drop")
+        logger.info("Dropped auto-stash after successful merge")
+
     return True, output
+
+
+def tmux_clear(agent: str):
+    """Send /clear to an agent's tmux pane to reset context."""
+    target = _agent_pane_targets.get(agent, f"{tmux_session}:{agent}")
+    try:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "-l", "/clear"],
+            capture_output=True, text=True, timeout=5,
+        )
+        time.sleep(0.2)
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "Enter"],
+            capture_output=True, text=True, timeout=5,
+        )
+        logger.info(f"Sent /clear to {agent} (target={target})")
+        time.sleep(1)  # Give Claude Code a moment to process
+    except subprocess.SubprocessError as e:
+        logger.warning(f"Failed to send /clear to {agent}: {e}")
 
 
 def tmux_nudge(agent: str):
@@ -521,28 +565,82 @@ Data: {json.dumps(event_data, indent=2)}
     return context
 
 
+def create_task_branches(task_id: str):
+    """Create red/green/blue branches for a new task in each worktree."""
+    if not repo_dir:
+        return
+    agents_cfg = config.get("agents", {})
+    branch_map = {
+        "qa": f"red/{task_id}",
+        "dev": f"green/{task_id}",
+        "refactor": f"blue/{task_id}",
+    }
+    for agent, branch in branch_map.items():
+        wt_dir = agents_cfg.get(agent, {}).get("working_dir", "")
+        if not wt_dir:
+            continue
+        # Check if branch already exists
+        exists, _ = run_git_command(wt_dir, "rev-parse", "--verify", branch)
+        if exists:
+            success, output = run_git_command(wt_dir, "checkout", branch)
+            if success:
+                logger.info(f"Checked out existing {branch} in {agent} worktree")
+            else:
+                logger.warning(f"Failed to checkout {branch} in {agent}: {output}")
+        else:
+            success, output = run_git_command(wt_dir, "checkout", "-b", branch)
+            if success:
+                logger.info(f"Created {branch} in {agent} worktree")
+            else:
+                logger.warning(f"Failed to create {branch} in {agent}: {output}")
+
+
 def assign_task_to_qa(task: dict):
-    """Write a task assignment to QA's mailbox (RGR starts with RED phase)."""
+    """Write a task assignment to QA's mailbox."""
     global rgr_state, current_task_id
     current_task_id = task["id"]
+
+    # Clear agent contexts and create task branches for new tasks
+    if current_task_id != task["id"]:
+        for agent in ("qa", "dev", "refactor"):
+            tmux_clear(agent)
+    create_task_branches(task["id"])
+
+    if project_mode == "existing":
+        source_file = task.get("source_file", "")
+        instructions = (
+            f"Write characterization tests for {source_file}. Read the source file from your "
+            "worktree, identify all public functions/classes, then write tests that PASS against "
+            "the current implementation. When your tests are ready and confirmed PASSING, commit "
+            "them with: git add . && git commit -m 'red: characterize <file>' "
+            "then use the send_to_dev MCP tool to notify Dev."
+        )
+        phase_label = "characterization phase"
+    else:
+        source_file = ""
+        instructions = (
+            "Write failing tests for this requirement. When your tests are ready "
+            "and confirmed FAILING (RED), commit them with: git add . && git commit -m 'red: <description>' "
+            "then use the send_to_dev MCP tool to notify Dev."
+        )
+        phase_label = "RED phase"
 
     content = {
         "task_id": task["id"],
         "title": task["title"],
         "description": task["description"],
         "acceptance_criteria": task.get("acceptance_criteria", []),
-        "instructions": (
-            "Write failing tests for this requirement. When your tests are ready "
-            "and confirmed FAILING (RED), commit them with: git add . && git commit -m 'red: <description>' "
-            "then use the send_to_dev MCP tool to notify Dev."
-        ),
+        "instructions": instructions,
     }
+    if source_file:
+        content["source_file"] = source_file
+
     write_to_mailbox("qa", "task_assignment", content)
     tmux_nudge("qa")
     task["status"] = "in_progress"
     save_tasks()
     rgr_state = RGRState.WAITING_QA_RED
-    logger.info(f"Assigned task {task['id']} to QA (RED phase)")
+    logger.info(f"Assigned task {task['id']} to QA ({phase_label})")
 
 
 def handle_qa_message(message: dict):
@@ -572,21 +670,38 @@ def handle_qa_message(message: dict):
         logger.info(f"Merged {red_branch} into Dev worktree successfully")
 
     # Forward QA's tests to Dev
-    write_to_mailbox("dev", "test_request", {
+    if project_mode == "existing":
+        dev_instructions = (
+            "QA wrote characterization tests that PASS against the existing code. They have been "
+            "merged into your worktree. Review the code and tests. Improve the source code quality "
+            "while keeping all tests GREEN. When done, commit with: "
+            "git add . && git commit -m 'green: <description>' then use send_to_refactor."
+        )
+        phase_label = "characterization review"
+    else:
+        dev_instructions = (
+            "QA has written failing tests (RED) and they have been merged into your worktree. "
+            "Write the minimum code to make them pass (GREEN). When all tests pass, commit with: "
+            "git add . && git commit -m 'green: <description>' then use send_to_refactor."
+        )
+        phase_label = "GREEN phase"
+
+    dev_content = {
         "task_id": task["id"],
         "summary": content.get("summary", ""),
         "files_changed": content.get("files_changed", []),
         "test_instructions": content.get("test_instructions", ""),
         "branch": f"red/{task_id}",
-        "instructions": (
-            "QA has written failing tests (RED) and they have been merged into your worktree. "
-            "Write the minimum code to make them pass (GREEN). When all tests pass, commit with: "
-            "git add . && git commit -m 'green: <description>' then use send_to_refactor."
-        ),
-    })
+        "instructions": dev_instructions,
+    }
+    source_file = task.get("source_file", "")
+    if source_file:
+        dev_content["source_file"] = source_file
+
+    write_to_mailbox("dev", "test_request", dev_content)
     tmux_nudge("dev")
     rgr_state = RGRState.WAITING_DEV_GREEN
-    logger.info(f"QA tests ready for task {task['id']} -> merged into Dev, forwarded (GREEN phase)")
+    logger.info(f"QA tests ready for task {task['id']} -> merged into Dev, forwarded ({phase_label})")
 
 
 def handle_dev_message(message: dict):
@@ -617,22 +732,40 @@ def handle_dev_message(message: dict):
         logger.info(f"Merged {green_branch} into Refactor worktree successfully")
 
     # Forward Dev's code to Refactor
-    write_to_mailbox("refactor", "refactor_request", {
+    if project_mode == "existing":
+        refactor_instructions = (
+            "Legacy code with characterization tests has been merged into your worktree. "
+            "Refactor the legacy code for quality: address TODO comments from QA, improve DRY, "
+            "naming, type hints, and docs. All characterization tests must stay GREEN. "
+            "Commit with: git add . && git commit -m 'blue: <description>' "
+            "then use send_refactor_complete to report results."
+        )
+        phase_label = "legacy refactor"
+    else:
+        refactor_instructions = (
+            "Dev has written code that passes the tests (GREEN) and it has been merged into your worktree. "
+            "Refactor the code for quality (DRY, naming, docs) without changing behavior. Run tests to "
+            "verify they still pass. Commit with: git add . && git commit -m 'blue: <description>' "
+            "then use send_refactor_complete to report results."
+        )
+        phase_label = "BLUE phase"
+
+    refactor_content = {
         "task_id": task["id"],
         "summary": content.get("summary", ""),
         "files_changed": content.get("files_changed", []),
         "test_commands": content.get("test_commands", content.get("test_instructions", "")),
         "branch": f"green/{task_id}",
-        "instructions": (
-            "Dev has written code that passes the tests (GREEN) and it has been merged into your worktree. "
-            "Refactor the code for quality (DRY, naming, docs) without changing behavior. Run tests to "
-            "verify they still pass. Commit with: git add . && git commit -m 'blue: <description>' "
-            "then use send_refactor_complete to report results."
-        ),
-    })
+        "instructions": refactor_instructions,
+    }
+    source_file = task.get("source_file", "")
+    if source_file:
+        refactor_content["source_file"] = source_file
+
+    write_to_mailbox("refactor", "refactor_request", refactor_content)
     tmux_nudge("refactor")
     rgr_state = RGRState.WAITING_REFACTOR_BLUE
-    logger.info(f"Dev code ready for task {task['id']} -> merged into Refactor, forwarded (BLUE phase)")
+    logger.info(f"Dev code ready for task {task['id']} -> merged into Refactor, forwarded ({phase_label})")
 
 
 def handle_refactor_message(message: dict):
@@ -732,6 +865,7 @@ def main():
         logger.error(f"   Run: ollama pull {config['llm']['model']}")
         sys.exit(1)
     logger.info(f"LLM ready ({config['llm']['model']})")
+    logger.info(f"Project mode: {project_mode}")
     logger.info(f"Mailbox dir: {mailbox_dir}")
     logger.info(f"Tasks file: {tasks_path}")
     if repo_dir:
