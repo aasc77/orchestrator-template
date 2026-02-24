@@ -612,12 +612,13 @@ def create_task_branches(task_id: str):
 def assign_task_to_qa(task: dict):
     """Write a task assignment to QA's mailbox."""
     global rgr_state, current_task_id
-    current_task_id = task["id"]
 
     # Clear agent contexts and create task branches for new tasks
-    if current_task_id != task["id"]:
+    if current_task_id is not None and current_task_id != task["id"]:
         for agent in ("qa", "dev", "refactor"):
             tmux_clear(agent)
+
+    current_task_id = task["id"]
     create_task_branches(task["id"])
 
     if project_mode == "existing":

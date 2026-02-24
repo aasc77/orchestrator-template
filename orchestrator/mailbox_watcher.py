@@ -12,15 +12,23 @@ class MailboxWatcher:
         self.mailbox_dir = Path(mailbox_dir)
         self.to_dev_dir = self.mailbox_dir / "to_dev"
         self.to_qa_dir = self.mailbox_dir / "to_qa"
+        self.to_refactor_dir = self.mailbox_dir / "to_refactor"
         self._processed = set()
 
         # Ensure dirs exist
         self.to_dev_dir.mkdir(parents=True, exist_ok=True)
         self.to_qa_dir.mkdir(parents=True, exist_ok=True)
+        self.to_refactor_dir.mkdir(parents=True, exist_ok=True)
 
     def check_new_messages(self, recipient: str) -> list:
-        """Check for unread messages for a recipient."""
-        target_dir = self.to_dev_dir if recipient == "dev" else self.to_qa_dir
+        """Check for new messages for a recipient.
+
+        Uses an internal _processed set to track seen messages rather than
+        the 'read' flag on the JSON file, because agents calling check_messages
+        via MCP can mark messages as read before the orchestrator sees them.
+        """
+        dir_map = {"dev": self.to_dev_dir, "qa": self.to_qa_dir, "refactor": self.to_refactor_dir}
+        target_dir = dir_map.get(recipient, self.to_dev_dir)
         new_messages = []
 
         for f in sorted(target_dir.glob("*.json")):
@@ -28,9 +36,8 @@ class MailboxWatcher:
                 continue
             try:
                 msg = json.loads(f.read_text())
-                if not msg.get("read", False):
-                    new_messages.append(msg)
-                    self._processed.add(f.stem)
+                new_messages.append(msg)
+                self._processed.add(f.stem)
             except (json.JSONDecodeError, IOError) as e:
                 logger.warning(f"Failed to read message {f}: {e}")
 
@@ -49,7 +56,8 @@ class MailboxWatcher:
 
     def clear_mailbox(self, recipient: str):
         """Clear all messages for a recipient."""
-        target_dir = self.to_dev_dir if recipient == "dev" else self.to_qa_dir
+        dir_map = {"dev": self.to_dev_dir, "qa": self.to_qa_dir, "refactor": self.to_refactor_dir}
+        target_dir = dir_map.get(recipient, self.to_dev_dir)
         for f in target_dir.glob("*.json"):
             f.unlink()
         logger.info(f"Cleared mailbox for {recipient}")
@@ -57,7 +65,7 @@ class MailboxWatcher:
     def get_conversation_history(self) -> list:
         """Get all messages in chronological order for context."""
         all_messages = []
-        for d in [self.to_dev_dir, self.to_qa_dir]:
+        for d in [self.to_dev_dir, self.to_qa_dir, self.to_refactor_dir]:
             for f in d.glob("*.json"):
                 try:
                     msg = json.loads(f.read_text())
