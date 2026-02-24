@@ -673,8 +673,10 @@ def handle_qa_message(message: dict):
     if project_mode == "existing":
         dev_instructions = (
             "QA wrote characterization tests that PASS against the existing code. They have been "
-            "merged into your worktree. Review the code and tests. Improve the source code quality "
-            "while keeping all tests GREEN. When done, commit with: "
+            "merged into your worktree. Your job is to VERIFY the tests are correct and thorough -- "
+            "NOT to refactor or rewrite the source code. Review the test coverage, add any missing "
+            "edge cases, and ensure tests accurately document the current behavior. "
+            "Do NOT modify the source code. When done, commit with: "
             "git add . && git commit -m 'green: <description>' then use send_to_refactor."
         )
         phase_label = "characterization review"
