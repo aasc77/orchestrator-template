@@ -18,26 +18,27 @@ class OllamaClient:
         """Ask the LLM to make a routing decision.
 
         Returns dict with:
-          - action: "send_to_dev" | "send_to_qa" | "next_task" | "flag_human" | "done"
+          - action: "send_to_qa" | "send_to_dev" | "send_to_refactor" | "next_task" | "flag_human" | "done"
           - message: str to send to the target agent
           - reasoning: str explaining the decision
         """
-        system_prompt = """You are an AI project manager orchestrating a Dev and QA workflow.
-You receive status updates and must decide the next action.
+        system_prompt = """You are an AI project manager orchestrating a Red-Green-Refactor (RGR) pipeline with 3 agents: QA (RED), Dev (GREEN), and Refactor (BLUE).
 
 ALWAYS respond with valid JSON only (no markdown, no backticks):
 {
-  "action": "send_to_dev" | "send_to_qa" | "next_task" | "flag_human" | "done",
+  "action": "send_to_qa" | "send_to_dev" | "send_to_refactor" | "next_task" | "flag_human" | "done",
   "message": "instruction to send to the agent",
   "reasoning": "brief explanation of your decision"
 }
 
-Rules:
-- If QA passed: action = "next_task"
-- If QA failed with bugs: action = "send_to_dev", include bug details in message
+RGR Pipeline Rules:
+- Tasks START with QA: QA writes failing tests (RED phase)
+- QA produced failing tests -> action = "send_to_dev" (forward tests to Dev)
+- Dev wrote code to pass tests (GREEN phase) -> action = "send_to_refactor"
+- Refactor cleaned code, tests still pass (BLUE phase) -> action = "next_task"
+- Refactor reports tests broke -> action = "send_to_dev" (Dev must fix)
 - If same task failed 5+ times: action = "flag_human"
 - If no more tasks: action = "done"
-- If Dev just finished coding: action = "send_to_qa"
 - Keep messages clear and actionable
 - Do NOT include thinking tags or markdown formatting"""
 

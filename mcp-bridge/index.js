@@ -29,6 +29,7 @@ const WORKSPACE_DIR = process.env.WORKSPACE_DIR ||
 for (const dir of [
   `${MAILBOX_DIR}/to_dev`,
   `${MAILBOX_DIR}/to_qa`,
+  `${MAILBOX_DIR}/to_refactor`,
   WORKSPACE_DIR,
 ]) {
   fs.mkdirSync(dir, { recursive: true });
@@ -133,7 +134,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "send_to_dev",
       description:
-        "Send test results back to the Dev agent. Include pass/fail status, bugs found, and what needs fixing.",
+        "Send test results back to the Dev agent. Include pass/fail status, bugs found, and what needs fixing. IMPORTANT: Commit your tests with git before calling this.",
       inputSchema: {
         type: "object",
         properties: {
@@ -167,8 +168,73 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: "string",
             description: "Description of tests that were executed",
           },
+          branch: {
+            type: "string",
+            description: "Git branch where the tests were committed (e.g., red/rgr-1)",
+          },
         },
         required: ["status", "summary", "tests_run"],
+      },
+    },
+    {
+      name: "send_to_refactor",
+      description:
+        "Send code to the Refactor agent for cleanup. Use after Dev code passes tests. Include what was built, files changed, and test commands. IMPORTANT: Commit your code with git before calling this.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          summary: {
+            type: "string",
+            description: "What was built/changed",
+          },
+          files_changed: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of files that were created or modified",
+          },
+          test_commands: {
+            type: "string",
+            description: "Commands to run to verify tests still pass after refactoring",
+          },
+          branch: {
+            type: "string",
+            description: "Git branch where the code was committed (e.g., green/rgr-1)",
+          },
+        },
+        required: ["summary", "files_changed", "test_commands"],
+      },
+    },
+    {
+      name: "send_refactor_complete",
+      description:
+        "Send refactor results back to Dev. Include pass/fail status and what was refactored. IMPORTANT: Commit your changes with git before calling this.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          status: {
+            type: "string",
+            enum: ["pass", "fail"],
+            description: "Whether tests still pass after refactoring",
+          },
+          summary: {
+            type: "string",
+            description: "Summary of refactoring changes made",
+          },
+          files_changed: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of files that were refactored",
+          },
+          issues: {
+            type: "string",
+            description: "Description of any issues encountered (if fail)",
+          },
+          branch: {
+            type: "string",
+            description: "Git branch where the refactored code was committed (e.g., blue/rgr-1)",
+          },
+        },
+        required: ["status", "summary"],
       },
     },
     {
@@ -180,8 +246,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           role: {
             type: "string",
-            enum: ["dev", "qa"],
-            description: "Your role (dev or qa)",
+            enum: ["dev", "qa", "refactor"],
+            description: "Your role (dev or qa or refactor)",
           },
         },
         required: ["role"],
@@ -233,6 +299,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: "text",
             text: `Test results sent to Dev (${msg.id}). Status: ${args.status}`,
+          },
+        ],
+      };
+    }
+
+    case "send_to_refactor": {
+      const msg = createMessage("dev", "refactor", "ready_for_refactor", args);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Code sent to Refactor agent (${msg.id}). Refactor will clean up the code.`,
+          },
+        ],
+      };
+    }
+
+    case "send_refactor_complete": {
+      const msg = createMessage("refactor", "dev", "refactor_complete", args);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Refactor results sent to Dev (${msg.id}). Status: ${args.status}`,
           },
         ],
       };

@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-echo "Multi-Agent Dev/QA Setup"
-echo "=========================="
+echo "Multi-Agent RGR Orchestrator Setup"
+echo "==================================="
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -74,10 +74,11 @@ else
     echo "  1. Create a project:"
     echo "     $PROJECT_DIR/scripts/new-project.sh"
     echo ""
-    echo "  2. Customize tasks and agent instructions:"
+    echo "  2. Customize tasks and 3-agent instructions:"
     echo "     vi $PROJECT_DIR/projects/<name>/tasks.json"
-    echo "     vi ~/Repositories/<name>/CLAUDE.md"
-    echo "     vi ~/Repositories/<name>_qa/CLAUDE.md"
+    echo "     vi ~/Repositories/<name>_qa/CLAUDE.md      (QA RED)"
+    echo "     vi ~/Repositories/<name>/CLAUDE.md          (Dev GREEN)"
+    echo "     vi ~/Repositories/<name>_refactor/CLAUDE.md (Refactor BLUE)"
     echo ""
     echo "  3. Launch:"
     echo "     $PROJECT_DIR/scripts/start.sh <name>"

@@ -6,10 +6,15 @@ project: my_project
 tmux:
   session_name: myproject
 
+repo_dir: ~/Repositories/my-project                          # EDIT: your repo root
+
 agents:
-  dev:
-    working_dir: ~/Repositories/my-project       # EDIT: your dev repo
-    pane: orch.0
   qa:
-    working_dir: ~/Repositories/my-project-qa    # EDIT: your QA repo (or same as dev)
-    pane: orch.1
+    working_dir: ~/Repositories/my-project/.worktrees/qa      # EDIT: QA worktree
+    pane: qa.0
+  dev:
+    working_dir: ~/Repositories/my-project/.worktrees/dev     # EDIT: Dev worktree
+    pane: qa.1
+  refactor:
+    working_dir: ~/Repositories/my-project/.worktrees/refactor # EDIT: Refactor worktree
+    pane: qa.2
