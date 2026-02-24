@@ -19,9 +19,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPOS_DIR="$HOME/Repositories"
 
+# ─── Prompt extraction helper ───────────────────────────────────────────────
+extract_prompt() {
+    local file="$1" target="$2"
+    awk -v t="$target" '
+        $0 == "## FILE_TARGET: " t { found=1; next }
+        /^## FILE_TARGET:/ { found=0 }
+        found { print }
+    ' "$file"
+}
+
 # ─── Cleanup trap ─────────────────────────────────────────────────────────────
 CLEANUP_PROJECT_DIR=""
 CLEANUP_SHARED_DIR=""
+CLEANUP_REPO_DIR=""
 
 cleanup() {
     if [[ -n "$CLEANUP_PROJECT_DIR" && -d "$CLEANUP_PROJECT_DIR" ]]; then
@@ -32,6 +43,10 @@ cleanup() {
         rm -rf "$CLEANUP_SHARED_DIR"
         warn "Cleaned up partial shared directory: $CLEANUP_SHARED_DIR"
     fi
+    if [[ -n "$CLEANUP_REPO_DIR" && -d "$CLEANUP_REPO_DIR" ]]; then
+        rm -rf "$CLEANUP_REPO_DIR"
+        warn "Cleaned up partial repo directory: $CLEANUP_REPO_DIR"
+    fi
 }
 
 trap cleanup INT TERM ERR
@@ -40,6 +55,114 @@ trap cleanup INT TERM ERR
 echo ""
 echo "  ${BOLD}New Project Wizard${RESET}"
 echo "  =================="
+echo ""
+
+# ─── Phase 0: Mode selection ────────────────────────────────────────────────
+echo "  Select a mode:"
+echo ""
+echo "    1) PM Pre-Flight    -- Generate a PRD from a vague idea"
+echo "    2) New Project RGR  -- Set up Red-Green-Refactor for a new codebase"
+echo "    3) Existing Project -- Backfill tests on an existing POC"
+echo ""
+read -r -p "  Mode [1/2/3]: " MODE_CHOICE
+
+case "$MODE_CHOICE" in
+    1) PROJECT_MODE="pm" ;;
+    2) PROJECT_MODE="new" ;;
+    3) PROJECT_MODE="existing" ;;
+    *)
+        error "Invalid choice. Pick 1, 2, or 3."
+        exit 1
+        ;;
+esac
+echo ""
+
+# ─── PM Pre-Flight Mode ─────────────────────────────────────────────────────
+if [[ "$PROJECT_MODE" == "pm" ]]; then
+    info "PM Pre-Flight mode"
+    echo ""
+    echo "  Describe your idea (one paragraph):"
+    read -r -p "  > " USER_IDEA
+
+    if [[ -z "$USER_IDEA" ]]; then
+        error "Idea cannot be empty."
+        exit 1
+    fi
+
+    # Extract PM prompt from docs
+    PM_PROMPT_FILE="$ROOT_DIR/docs/pm_agent.md"
+    if [[ ! -f "$PM_PROMPT_FILE" ]]; then
+        error "PM prompt file not found: $PM_PROMPT_FILE"
+        exit 1
+    fi
+
+    PM_PROMPT=$(extract_prompt "$PM_PROMPT_FILE" "pm_agent/CLAUDE.md")
+    # Replace placeholder with user idea
+    PM_PROMPT="${PM_PROMPT//\{\{USER_IDEA\}\}/$USER_IDEA}"
+
+    # Create temp working directory
+    PM_TMPDIR=$(mktemp -d)
+    cat > "$PM_TMPDIR/CLAUDE.md" <<PMEOF
+$PM_PROMPT
+
+---
+
+## User's Idea
+$USER_IDEA
+
+## Output
+Write the complete PRD to a file called \`prd.md\` in this directory.
+PMEOF
+
+    info "Launching Claude Code as PM agent..."
+    echo "  Working dir: $PM_TMPDIR"
+    echo ""
+
+    # Launch Claude Code with PM system prompt
+    (cd "$PM_TMPDIR" && claude --dangerously-skip-permissions) || true
+
+    # Check for generated PRD
+    if [[ -f "$PM_TMPDIR/prd.md" ]]; then
+        success "PRD generated: $PM_TMPDIR/prd.md"
+        echo ""
+        echo "  ${BOLD}Preview (first 20 lines):${RESET}"
+        head -20 "$PM_TMPDIR/prd.md" | sed 's/^/    /'
+        echo "    ..."
+        echo ""
+        read -r -p "  Save PRD to a project's QA mailbox? [folder name or n]: " SAVE_TARGET
+        if [[ -n "$SAVE_TARGET" && "$SAVE_TARGET" != "n" ]]; then
+            SAVE_KEY="${SAVE_TARGET//_/-}"
+            SAVE_MAILBOX="$ROOT_DIR/shared/$SAVE_KEY/mailbox/to_qa"
+            if [[ -d "$SAVE_MAILBOX" ]]; then
+                cp "$PM_TMPDIR/prd.md" "$SAVE_MAILBOX/prd.md"
+                success "Saved PRD to $SAVE_MAILBOX/prd.md"
+            else
+                warn "Mailbox not found: $SAVE_MAILBOX"
+                warn "PRD remains at: $PM_TMPDIR/prd.md"
+            fi
+        else
+            info "PRD remains at: $PM_TMPDIR/prd.md"
+        fi
+    else
+        warn "No prd.md generated. Check $PM_TMPDIR for output."
+    fi
+
+    exit 0
+fi
+
+# ─── Select prompt file based on mode ───────────────────────────────────────
+if [[ "$PROJECT_MODE" == "new" ]]; then
+    PROMPT_FILE="$ROOT_DIR/docs/NEW PROJECT PROMPTS.md"
+    info "Mode: New Project RGR"
+else
+    PROMPT_FILE="$ROOT_DIR/docs/EXISTING PROJECT PROMPTS.md"
+    info "Mode: Existing Project Backfill"
+fi
+
+if [[ ! -f "$PROMPT_FILE" ]]; then
+    error "Prompt file not found: $PROMPT_FILE"
+    exit 1
+fi
 echo ""
 
 # ─── Phase 1: Gather folder name ─────────────────────────────────────────────
@@ -65,25 +188,22 @@ while true; do
     break
 done
 
-# ─── Phase 2: Locate dev directory ───────────────────────────────────────────
-DEV_DIR="$REPOS_DIR/$FOLDER_NAME"
-
-if [[ -d "$DEV_DIR" ]]; then
-    info "Dev directory found: $DEV_DIR"
-else
-    mkdir -p "$DEV_DIR"
-    info "Created dev directory: $DEV_DIR"
-fi
-
-# ─── Phase 3: Derive project name + key ──────────────────────────────────────
+# ─── Phase 2: Derive project name + key ──────────────────────────────────────
+REPO_DIR="$REPOS_DIR/$FOLDER_NAME"
 # Project name: underscored version (e.g., my_app)
 PROJECT_NAME="${FOLDER_NAME//-/_}"
 # Project key: hyphenated version (e.g., my-app)
 PROJECT_KEY="${FOLDER_NAME//_/-}"
 
+# Worktree paths inside the repo
+QA_DIR="$REPO_DIR/.worktrees/qa"
+DEV_DIR="$REPO_DIR/.worktrees/dev"
+REFACTOR_DIR="$REPO_DIR/.worktrees/refactor"
+
 echo ""
 info "Project name: $PROJECT_NAME"
 info "Project key:  $PROJECT_KEY"
+info "Repo dir:     $REPO_DIR"
 
 # Validate project key doesn't conflict with existing project
 if [[ -d "$ROOT_DIR/projects/$PROJECT_KEY" ]]; then
@@ -92,31 +212,82 @@ if [[ -d "$ROOT_DIR/projects/$PROJECT_KEY" ]]; then
     exit 1
 fi
 
-# ─── Phase 4: QA directory ───────────────────────────────────────────────────
-QA_DIR="${DEV_DIR}_qa"
-
-echo ""
-if [[ -d "$QA_DIR" ]]; then
-    info "QA directory found: $QA_DIR"
+# ─── Phase 3: Initialize git repo ────────────────────────────────────────────
+if [[ -d "$REPO_DIR/.git" ]]; then
+    info "Git repo already exists at $REPO_DIR"
 else
-    # If dev has a git remote, clone it; otherwise create empty
-    REMOTE_URL=""
-    if [[ -d "$DEV_DIR/.git" ]]; then
-        REMOTE_URL=$(git -C "$DEV_DIR" remote get-url origin 2>/dev/null || true)
-    fi
+    mkdir -p "$REPO_DIR"
+    git -C "$REPO_DIR" init --quiet
+    info "Initialized git repo: $REPO_DIR"
 
-    if [[ -n "$REMOTE_URL" ]]; then
-        info "Cloning QA directory from $REMOTE_URL..."
-        if git clone "$REMOTE_URL" "$QA_DIR" 2>/dev/null; then
-            success "Cloned QA directory: $QA_DIR"
-        else
-            warn "Git clone failed. Creating empty directory instead."
-            mkdir -p "$QA_DIR"
-            info "Created QA directory: $QA_DIR"
-        fi
+    # Create .gitignore
+    cat > "$REPO_DIR/.gitignore" <<'GIEOF'
+# Worktrees (agent-specific checkouts)
+.worktrees/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+GIEOF
+    info "Created .gitignore"
+
+    # Create initial commit so worktrees can branch from HEAD
+    git -C "$REPO_DIR" add .gitignore
+    git -C "$REPO_DIR" commit --quiet -m "chore: initial commit with .gitignore"
+    info "Created initial commit on main"
+fi
+
+# Detect default branch name (existing repos may use master or other names)
+DEFAULT_BRANCH=$(git -C "$REPO_DIR" symbolic-ref --short HEAD 2>/dev/null || echo "main")
+
+# Ensure .worktrees/ is in .gitignore (for existing repos that skipped git init)
+if [[ -f "$REPO_DIR/.gitignore" ]]; then
+    if ! grep -q '^\.worktrees/' "$REPO_DIR/.gitignore"; then
+        echo -e '\n# Worktrees (agent-specific checkouts)\n.worktrees/' >> "$REPO_DIR/.gitignore"
+        git -C "$REPO_DIR" add .gitignore
+        git -C "$REPO_DIR" commit --quiet -m "chore: add .worktrees/ to .gitignore"
+        info "Added .worktrees/ to existing .gitignore"
+    fi
+else
+    # No .gitignore at all -- create minimal one
+    echo -e '# Worktrees (agent-specific checkouts)\n.worktrees/' > "$REPO_DIR/.gitignore"
+    git -C "$REPO_DIR" add .gitignore
+    git -C "$REPO_DIR" commit --quiet -m "chore: add .gitignore with .worktrees/"
+    info "Created .gitignore with .worktrees/"
+fi
+
+# ─── Phase 4: Create worktrees ───────────────────────────────────────────────
+for wt_name in qa dev refactor; do
+    wt_path="$REPO_DIR/.worktrees/$wt_name"
+    wt_branch="${wt_name}-main"
+    if [[ -d "$wt_path" ]]; then
+        info "Worktree already exists: .worktrees/$wt_name"
     else
-        mkdir -p "$QA_DIR"
-        info "Created QA directory: $QA_DIR"
+        git -C "$REPO_DIR" worktree add "$wt_path" -b "$wt_branch" --quiet
+        info "Created worktree: .worktrees/$wt_name (branch: $wt_branch)"
+    fi
+done
+
+# Clean up stale root-level files from old wizard runs
+if [[ -f "$REPO_DIR/CLAUDE.md" ]]; then
+    warn "Found stale CLAUDE.md at repo root (from old wizard run)"
+    warn "Agents use .worktrees/*/CLAUDE.md now. Removing root copy."
+    if git -C "$REPO_DIR" ls-files --error-unmatch CLAUDE.md 2>/dev/null; then
+        git -C "$REPO_DIR" rm --quiet -f CLAUDE.md
+        git -C "$REPO_DIR" commit --quiet -m "chore: remove stale root CLAUDE.md"
+    else
+        rm "$REPO_DIR/CLAUDE.md"
     fi
 fi
 
@@ -130,42 +301,32 @@ echo "  ${BOLD}Project Setup Summary${RESET}"
 echo "  ${BOLD}=================================${RESET}"
 echo "  Project key:   ${CYAN}$PROJECT_KEY${RESET}"
 echo "  Project name:  ${CYAN}$PROJECT_NAME${RESET}"
-echo "  Dev directory: $DEV_DIR"
-echo "  QA directory:  $QA_DIR"
+echo "  Repo dir:      $REPO_DIR"
+echo "    .worktrees/qa/:        QA agent (RED)"
+echo "    .worktrees/dev/:       Dev agent (GREEN)"
+echo "    .worktrees/refactor/:  Refactor agent (BLUE)"
 echo ""
 echo "  Will create:"
 echo "    projects/$PROJECT_KEY/config.yaml"
 echo "    projects/$PROJECT_KEY/tasks.json"
-echo "    shared/$PROJECT_KEY/mailbox/{to_dev,to_qa}/"
+echo "    shared/$PROJECT_KEY/mailbox/{to_dev,to_qa,to_refactor}/"
 echo "    shared/$PROJECT_KEY/workspace/"
-if [[ -f "$DEV_DIR/CLAUDE.md" ]]; then
-    if grep -q "agent-bridge" "$DEV_DIR/CLAUDE.md" 2>/dev/null; then
-        echo "    $DEV_DIR/CLAUDE.md  ${DIM}(exists, MCP already present -- skip)${RESET}"
+for agent_name in qa dev refactor; do
+    agent_dir="$REPO_DIR/.worktrees/$agent_name"
+    if [[ -f "$agent_dir/CLAUDE.md" ]]; then
+        if grep -q "agent-bridge" "$agent_dir/CLAUDE.md" 2>/dev/null; then
+            echo "    .worktrees/$agent_name/CLAUDE.md  ${DIM}(exists, MCP already present -- skip)${RESET}"
+        else
+            echo "    .worktrees/$agent_name/CLAUDE.md  ${YELLOW}(exists -- will append MCP section)${RESET}"
+        fi
     else
-        echo "    $DEV_DIR/CLAUDE.md  ${YELLOW}(exists -- will append MCP section)${RESET}"
+        echo "    .worktrees/$agent_name/CLAUDE.md  ${DIM}(new)${RESET}"
     fi
-else
-    echo "    $DEV_DIR/CLAUDE.md  ${DIM}(new)${RESET}"
-fi
-if [[ -f "$QA_DIR/CLAUDE.md" ]]; then
-    if grep -q "agent-bridge" "$QA_DIR/CLAUDE.md" 2>/dev/null; then
-        echo "    $QA_DIR/CLAUDE.md   ${DIM}(exists, MCP already present -- skip)${RESET}"
-    else
-        echo "    $QA_DIR/CLAUDE.md   ${YELLOW}(exists -- will append MCP section)${RESET}"
-    fi
-else
-    echo "    $QA_DIR/CLAUDE.md   ${DIM}(new)${RESET}"
-fi
+done
 echo "  ${BOLD}=================================${RESET}"
 echo ""
 
-read -r -p "  Proceed? [Y/n]: " confirm
-confirm="${confirm:-Y}"
-
-if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-    echo "  Aborted."
-    exit 0
-fi
+echo ""
 
 # ─── Phase 6: Create all files ───────────────────────────────────────────────
 
@@ -177,6 +338,7 @@ CLEANUP_SHARED_DIR="$SHARED_DIR"
 mkdir -p "$PROJECT_DIR"
 mkdir -p "$SHARED_DIR/mailbox/to_dev"
 mkdir -p "$SHARED_DIR/mailbox/to_qa"
+mkdir -p "$SHARED_DIR/mailbox/to_refactor"
 mkdir -p "$SHARED_DIR/workspace"
 
 # --- config.yaml ---
@@ -187,13 +349,18 @@ project: $PROJECT_NAME
 tmux:
   session_name: $PROJECT_KEY
 
+repo_dir: $REPO_DIR
+
 agents:
-  dev:
-    working_dir: $DEV_DIR
-    pane: orch.0
   qa:
     working_dir: $QA_DIR
-    pane: orch.1
+    pane: qa.0
+  dev:
+    working_dir: $DEV_DIR
+    pane: qa.1
+  refactor:
+    working_dir: $REFACTOR_DIR
+    pane: qa.2
 EOF
 info "Created projects/$PROJECT_KEY/config.yaml"
 
@@ -203,30 +370,19 @@ cat > "$PROJECT_DIR/tasks.json" <<EOF
   "project": "$PROJECT_NAME",
   "tasks": [
     {
-      "id": "smoke-1",
-      "title": "Smoke test: create task1.txt in shared workspace",
-      "description": "Create a file at $ROOT_DIR/shared/$PROJECT_KEY/workspace/task1.txt containing exactly: 'task 1 done'. This is a simple smoke test to verify the Dev->QA pipeline works end-to-end.",
+      "id": "rgr-1",
+      "title": "Create a greeting module with tests",
+      "description": "Create a Python module greeting.py with a function greet(name) that returns 'Hello, <name>!' where <name> is the argument passed in. For example, greet('World') returns 'Hello, World!'. QA writes a failing test first, Dev implements the function, Refactor cleans up.",
       "acceptance_criteria": [
-        "$ROOT_DIR/shared/$PROJECT_KEY/workspace/task1.txt exists",
-        "File contains exactly: 'task 1 done'",
-        "File is readable via the read_workspace_file MCP tool"
+        "greeting.py exists with a greet(name) function",
+        "greet('World') returns 'Hello, World!'",
+        "greet('Alice') returns 'Hello, Alice!'",
+        "A pytest test file exists that verifies the function",
+        "All tests pass"
       ],
       "status": "pending",
       "attempts": 0,
-      "max_attempts": 3
-    },
-    {
-      "id": "smoke-2",
-      "title": "Smoke test: create task2.txt in shared workspace",
-      "description": "Create a file at $ROOT_DIR/shared/$PROJECT_KEY/workspace/task2.txt containing exactly: 'task 2 done'. This tests that the orchestrator correctly hands off to the next task after the first one completes.",
-      "acceptance_criteria": [
-        "$ROOT_DIR/shared/$PROJECT_KEY/workspace/task2.txt exists",
-        "File contains exactly: 'task 2 done'",
-        "File is readable via the read_workspace_file MCP tool"
-      ],
-      "status": "pending",
-      "attempts": 0,
-      "max_attempts": 3
+      "max_attempts": 5
     }
   ]
 }
@@ -235,21 +391,21 @@ info "Created projects/$PROJECT_KEY/tasks.json"
 
 # --- MCP protocol snippets (appended to existing CLAUDE.md or written fresh) ---
 
-DEV_MCP_SECTION=$(cat <<'DEVMCP'
+IFS= read -r -d '' DEV_MCP_SECTION <<'DEVMCP' || true
 
 ---
 
 ## Communication Protocol (MCP-Based)
 
-You are the **DEVELOPER** agent in an automated Dev/QA workflow with an AI orchestrator.
+You are the **DEVELOPER** agent (GREEN) in an automated Red-Green-Refactor workflow with an AI orchestrator.
 
 ### MCP Tools Available
 You have these tools from the `agent-bridge` MCP server:
 
-- **`send_to_qa`** -- Notify QA that code is ready for testing
+- **`send_to_refactor`** -- Notify Refactor agent that code is ready for cleanup
   - `summary`: What you built/changed
   - `files_changed`: List of files created or modified
-  - `test_instructions`: How QA should test (URLs, commands, expected behavior)
+  - `test_commands`: Commands to run tests (e.g., "pytest")
 
 - **`check_messages`** -- Check your mailbox for orchestrator tasks and QA feedback
   - `role`: Always use `"dev"`
@@ -260,32 +416,28 @@ You have these tools from the `agent-bridge` MCP server:
 
 ### Workflow
 1. Receive a task via `check_messages` (role: `"dev"`)
-2. Implement the feature/fix in the project codebase
-3. When ready, call `send_to_qa` with:
-   - What changed (summary)
-   - Files modified (list)
-   - How to test (URLs, steps, expected behavior)
-4. Wait -- periodically call `check_messages` with role `"dev"` to get QA results
-5. If QA reports bugs -> fix them -> call `send_to_qa` again
-6. If QA passes -> wait for next task from orchestrator
+2. The failing tests from QA are already in your worktree (merged by the orchestrator)
+3. Write the minimum code to make the tests pass
+4. Run the tests to confirm they pass
+5. **Commit your work**: `git add . && git commit -m "green: <description>"`
+6. Call `send_to_refactor` with summary and files changed
+7. Wait -- periodically call `check_messages` with role `"dev"` to get feedback
 
 ### Rules
-- Always include test instructions when sending to QA
-- Include relevant URLs, endpoints, and test credentials
-- Be specific about expected behavior for each acceptance criterion
+- ALWAYS commit your code BEFORE calling send_to_refactor
+- Do NOT modify test files -- only write implementation code
+- Write the minimum code to pass tests, nothing more
 - If a task is ambiguous, make reasonable assumptions and document them
-- Code should be committed/deployed before sending to QA
 DEVMCP
-)
 
-QA_MCP_SECTION=$(cat <<'QAMCP'
+IFS= read -r -d '' QA_MCP_SECTION <<'QAMCP' || true
 
 ---
 
 ## Communication Protocol (MCP-Based)
 
-You are the **QA Agent** in an automated Dev/QA workflow with an AI orchestrator.
-You do BLACK-BOX testing only -- test behavior, not implementation.
+You are the **QA Agent** (RED) in an automated Red-Green-Refactor workflow with an AI orchestrator.
+You write FAILING tests that define the contract for the Dev agent.
 
 ### MCP Tools Available
 You have these tools from the `agent-bridge` MCP server:
@@ -296,7 +448,7 @@ You have these tools from the `agent-bridge` MCP server:
   - `bugs`: Array of bug objects (empty if pass)
   - `tests_run`: Description of what you tested
 
-- **`check_messages`** -- Check your mailbox for new work from Dev
+- **`check_messages`** -- Check your mailbox for new work
   - `role`: Always use `"qa"`
 
 - **`list_workspace`** -- See all files in the shared workspace
@@ -304,48 +456,67 @@ You have these tools from the `agent-bridge` MCP server:
 - **`read_workspace_file`** -- Read a specific file from workspace
 
 ### Workflow
-1. When notified, call `check_messages` with role `"qa"` to get Dev's submission
-2. Read what was built and the test instructions
-3. Test the feature:
-   - Hit the URLs/endpoints Dev specified
-   - Use the test credentials provided
-   - Check acceptance criteria one by one
-4. Call `send_to_dev` with results:
-   - **pass** -- All acceptance criteria met
-   - **fail** -- Bugs found (include bug details)
-   - **partial** -- Some criteria met, some not
-
-### Bug Report Format
-For each bug in the `bugs` array:
-```json
-{
-  "description": "What's wrong",
-  "severity": "critical|major|minor|cosmetic",
-  "steps_to_reproduce": "Exact steps",
-  "expected": "What should happen",
-  "actual": "What actually happens"
-}
-```
-
-### Testing Approach
-- Test as an end user would -- use the UI, call the APIs, try the flows
-- Test happy path first, then edge cases
-- Test with bad inputs: empty fields, invalid data
-- Verify error messages are helpful and correct HTTP status codes
-- Check all acceptance criteria from the task -- every one must pass for a PASS verdict
-
-### Severity Guide
-- **critical** -- Feature broken, can't complete the flow at all
-- **major** -- Feature works but significant issue (wrong data, security hole, bad error handling)
-- **minor** -- Works but UX issue (confusing message, slow response, minor display bug)
-- **cosmetic** -- Visual only (alignment, typo, color)
+1. Receive a task via `check_messages` with role `"qa"`
+2. Write failing tests that define the expected behavior
+3. Run the tests to confirm they FAIL (no implementation yet)
+4. **Commit your tests**: `git add . && git commit -m "red: <description>"`
+5. Call `send_to_dev` with status "fail", summary, and tests_run
+6. Wait for orchestrator to assign the next task
 
 ### Rules
-- Be thorough but fair -- don't block on cosmetic issues
-- If you can't test because setup instructions are missing, report THAT as a bug
-- If all acceptance criteria pass, mark PASS even with minor cosmetic findings
+- ALWAYS commit your tests BEFORE calling send_to_dev
+- Only write tests, NEVER write implementation code
+- Tests MUST fail before handoff (that's the RED in Red-Green-Refactor)
+- Use pytest for Python projects
+- Be thorough: test happy path, edge cases, and error conditions
 QAMCP
-)
+
+IFS= read -r -d '' REFACTOR_MCP_SECTION <<'REFMCP' || true
+
+---
+
+## Communication Protocol (MCP-Based)
+
+You are the **REFACTOR** agent (BLUE) in an automated Red-Green-Refactor workflow with an AI orchestrator.
+
+### MCP Tools Available
+You have these tools from the `agent-bridge` MCP server:
+
+- **`send_refactor_complete`** -- Report your refactoring results
+  - `status`: `"pass"` (tests still green) or `"fail"` (tests broke)
+  - `summary`: What you refactored
+  - `files_changed`: List of files modified (optional)
+  - `issues`: Description of issues if tests broke (optional)
+
+- **`check_messages`** -- Check your mailbox for refactoring requests
+  - `role`: Always use `"refactor"`
+
+- **`list_workspace`** -- See all files in the shared workspace
+
+- **`read_workspace_file`** -- Read a specific file from workspace
+
+### Workflow
+1. Receive code via `check_messages` (role: `"refactor"`)
+2. The implementation and tests are already in your worktree (merged by the orchestrator)
+3. Review the implementation and its tests
+4. Refactor: improve DRY, naming, magic strings, documentation, type hints
+5. Run the test suite to verify tests still pass
+6. **Commit your changes**: `git add . && git commit -m "blue: <description>"`
+7. Call `send_refactor_complete` with status and summary
+
+### Rules
+- ALWAYS commit your changes BEFORE calling send_refactor_complete
+- NEVER change functional behavior
+- NEVER modify test files
+- Run tests BEFORE reporting completion
+- Focus on code quality: DRY, naming, extracting constants, documentation
+- If unsure whether a change is safe, skip it
+REFMCP
+
+# Extract role prompts from selected prompt file
+QA_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "qa_agent/CLAUDE.md")
+DEV_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "dev_agent/CLAUDE.md")
+REFACTOR_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "refactor_agent/CLAUDE.md")
 
 # --- Dev CLAUDE.md ---
 if [[ -f "$DEV_DIR/CLAUDE.md" ]]; then
@@ -356,13 +527,11 @@ if [[ -f "$DEV_DIR/CLAUDE.md" ]]; then
         success "Appended MCP protocol to existing $DEV_DIR/CLAUDE.md"
     fi
 else
-    cat > "$DEV_DIR/CLAUDE.md" <<EOF
-# Dev Agent -- $PROJECT_NAME
-
-<!-- TODO: Add your project-specific context here -->
-<!-- Examples: tech stack, architecture, key URLs, deployment commands, DB schemas, etc. -->
-${DEV_MCP_SECTION}
-EOF
+    {
+        printf '%s\n\n' "# Dev Agent (GREEN) -- $PROJECT_NAME"
+        printf '%s\n' "$DEV_ROLE_PROMPT"
+        printf '%s\n' "$DEV_MCP_SECTION"
+    } > "$DEV_DIR/CLAUDE.md"
     info "Created $DEV_DIR/CLAUDE.md"
 fi
 
@@ -375,30 +544,47 @@ if [[ -f "$QA_DIR/CLAUDE.md" ]]; then
         success "Appended MCP protocol to existing $QA_DIR/CLAUDE.md"
     fi
 else
-    cat > "$QA_DIR/CLAUDE.md" <<EOF
-# QA Agent -- $PROJECT_NAME
-
-<!-- TODO: Add your project-specific test context here -->
-<!-- Examples: key URLs, test credentials, API endpoints, test commands, known bugs, etc. -->
-${QA_MCP_SECTION}
-EOF
+    {
+        printf '%s\n\n' "# QA Agent (RED) -- $PROJECT_NAME"
+        printf '%s\n' "$QA_ROLE_PROMPT"
+        printf '%s\n' "$QA_MCP_SECTION"
+    } > "$QA_DIR/CLAUDE.md"
     info "Created $QA_DIR/CLAUDE.md"
+fi
+
+# --- Refactor CLAUDE.md ---
+if [[ -f "$REFACTOR_DIR/CLAUDE.md" ]]; then
+    if grep -q "agent-bridge" "$REFACTOR_DIR/CLAUDE.md" 2>/dev/null; then
+        info "Refactor CLAUDE.md already has MCP protocol -- skipped"
+    else
+        echo "$REFACTOR_MCP_SECTION" >> "$REFACTOR_DIR/CLAUDE.md"
+        success "Appended MCP protocol to existing $REFACTOR_DIR/CLAUDE.md"
+    fi
+else
+    {
+        printf '%s\n\n' "# Refactor Agent (BLUE) -- $PROJECT_NAME"
+        printf '%s\n' "$REFACTOR_ROLE_PROMPT"
+        printf '%s\n' "$REFACTOR_MCP_SECTION"
+    } > "$REFACTOR_DIR/CLAUDE.md"
+    info "Created $REFACTOR_DIR/CLAUDE.md"
 fi
 
 # Clear cleanup markers on success
 CLEANUP_PROJECT_DIR=""
 CLEANUP_SHARED_DIR=""
+CLEANUP_REPO_DIR=""
 
 success "Created projects/$PROJECT_KEY/"
 success "Created shared/$PROJECT_KEY/mailbox/"
 success "Done!"
 
-# ─── Phase 7: Next steps ─────────────────────────────────────────────────────
+# ─── Phase 7: Launch ─────────────────────────────────────────────────────────
 echo ""
-echo "  ${BOLD}Next steps:${RESET}"
-echo "    1. Edit tasks:    ${DIM}vi $ROOT_DIR/projects/$PROJECT_KEY/tasks.json${RESET}"
-echo "    2. Review Dev:    ${DIM}vi $DEV_DIR/CLAUDE.md${RESET}"
-echo "    3. Review QA:     ${DIM}vi $QA_DIR/CLAUDE.md${RESET}"
-echo "    4. Launch:        ${DIM}$ROOT_DIR/scripts/start.sh $PROJECT_KEY${RESET}"
-echo "    5. Launch (auto): ${DIM}$ROOT_DIR/scripts/start.sh $PROJECT_KEY --yolo${RESET}"
+read -r -p "  Auto-approve agent actions (--yolo)? [Y/n]: " YOLO_CHOICE
+YOLO_CHOICE="${YOLO_CHOICE:-Y}"
+YOLO_ARG=""
+if [[ "$YOLO_CHOICE" =~ ^[Yy]$ ]]; then
+    YOLO_ARG="--yolo"
+fi
 echo ""
+exec "$ROOT_DIR/scripts/start.sh" "$PROJECT_KEY" $YOLO_ARG
