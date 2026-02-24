@@ -23,13 +23,23 @@ fi
 SESSION=$(python3 -c "import yaml; print(yaml.safe_load(open('$PROJECT_CONFIG'))['tmux']['session_name'])")
 DEV_DIR=$(python3 -c "import yaml; print(yaml.safe_load(open('$PROJECT_CONFIG'))['agents']['dev']['working_dir'])")
 QA_DIR=$(python3 -c "import yaml; print(yaml.safe_load(open('$PROJECT_CONFIG'))['agents']['qa']['working_dir'])")
+REFACTOR_DIR=$(python3 -c "import yaml; print(yaml.safe_load(open('$PROJECT_CONFIG'))['agents']['refactor']['working_dir'])")
 PROJECT_NAME=$(python3 -c "import yaml; print(yaml.safe_load(open('$PROJECT_CONFIG'))['project'])")
+REPO_DIR=$(python3 -c "import yaml; c=yaml.safe_load(open('$PROJECT_CONFIG')); print(c.get('repo_dir', ''))")
+PROJECT_MODE=$(python3 -c "import yaml; c=yaml.safe_load(open('$PROJECT_CONFIG')); print(c.get('mode', 'new'))")
 
-# System prompts for agents (CLAUDE.md in working dirs is picked up automatically by Claude Code)
-DEV_PROMPT="You are the Dev agent for project '$PROJECT_NAME'. Check your messages using the check_messages MCP tool with role 'dev' to get your task assignment."
-QA_PROMPT="You are the QA agent for project '$PROJECT_NAME'. Check your messages using the check_messages MCP tool with role 'qa' to get test requests."
+# System prompts for agents -- be extremely direct to avoid wasted exploration
+DEV_PROMPT="You are the Dev agent (GREEN). Your ONLY communication channel is the agent-bridge MCP server. Do NOT search for config files or explore the filesystem for messages. To get tasks: call the check_messages MCP tool with role 'dev'. To send code to refactor: call send_to_refactor. IMPORTANT: Always git add and commit your code BEFORE calling send_to_refactor. Start by calling check_messages now."
 
-echo "Multi-Agent Dev/QA Orchestrator"
+if [[ "$PROJECT_MODE" == "existing" ]]; then
+    QA_PROMPT="You are the QA agent (CHARACTERIZATION). Your ONLY communication channel is the agent-bridge MCP server. Do NOT search for config files or explore the filesystem for messages. To get tasks: call the check_messages MCP tool with role 'qa'. Your tests should PASS against the existing code (characterization, not TDD). To send test results: call send_to_dev. IMPORTANT: Always git add and commit your tests BEFORE calling send_to_dev. Start by calling check_messages now."
+else
+    QA_PROMPT="You are the QA agent (RED). Your ONLY communication channel is the agent-bridge MCP server. Do NOT search for config files or explore the filesystem for messages. To get tasks: call the check_messages MCP tool with role 'qa'. To send test results: call send_to_dev. IMPORTANT: Always git add and commit your tests BEFORE calling send_to_dev. Start by calling check_messages now."
+fi
+
+REFACTOR_PROMPT="You are the Refactor agent (BLUE). Your ONLY communication channel is the agent-bridge MCP server. Do NOT search for config files or explore the filesystem for messages. To get tasks: call the check_messages MCP tool with role 'refactor'. To send results: call send_refactor_complete. IMPORTANT: Always git add and commit your changes BEFORE calling send_refactor_complete. Start by calling check_messages now."
+
+echo "Multi-Agent RGR Orchestrator"
 echo "================================"
 echo "Project: $PROJECT ($PROJECT_NAME)"
 echo ""
@@ -49,11 +59,30 @@ echo "  ollama OK"
 command -v python3 >/dev/null 2>&1 || { echo "Python3 not found."; exit 1; }
 echo "  python3 OK"
 
-# Check Ollama is running
-if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-    echo ""
-    echo "Ollama is not running. Start it with: ollama serve"
-    exit 1
+command -v git >/dev/null 2>&1 || { echo "git not found."; exit 1; }
+echo "  git OK"
+
+# Check Ollama is running (with timeout), auto-start if needed
+if ! curl -sf --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
+    echo "  ollama server not responding -- starting it..."
+    # Try macOS app first, fall back to CLI
+    if [[ -d "/Applications/Ollama.app" ]]; then
+        open -a Ollama
+    else
+        ollama serve &>/dev/null &
+    fi
+    for i in $(seq 1 15); do
+        sleep 2
+        if curl -sf --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
+            break
+        fi
+        echo "  waiting for ollama... (${i}/15)"
+    done
+    if ! curl -sf --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
+        echo ""
+        echo "Ollama failed to start after 30s. Run manually: ollama serve"
+        exit 1
+    fi
 fi
 echo "  ollama server OK"
 
@@ -65,22 +94,87 @@ if [ ! -f "$MCP_CONFIG" ]; then
 fi
 echo "  MCP config OK"
 
-# Check agent working dirs exist
-if [ ! -d "$DEV_DIR" ]; then
-    echo "Dev working dir not found: $DEV_DIR"
-    echo "Create it or update $PROJECT_CONFIG"
-    exit 1
+# Ensure MCP bridge dependencies are installed
+if [ ! -d "$PROJECT_DIR/mcp-bridge/node_modules" ]; then
+    echo "  Installing MCP bridge dependencies..."
+    (cd "$PROJECT_DIR/mcp-bridge" && npm install --silent)
 fi
-echo "  Dev dir OK ($DEV_DIR)"
+echo "  MCP bridge deps OK"
 
-if [ ! -d "$QA_DIR" ]; then
-    echo "QA working dir not found: $QA_DIR"
-    echo "Creating it..."
-    mkdir -p "$QA_DIR"
+# Check agent working dirs exist (worktrees)
+for agent_label_dir in "Dev:$DEV_DIR" "QA:$QA_DIR" "Refactor:$REFACTOR_DIR"; do
+    label="${agent_label_dir%%:*}"
+    dir="${agent_label_dir#*:}"
+    if [ ! -d "$dir" ]; then
+        echo "$label working dir not found: $dir"
+        echo "Run new-project.sh to set up worktrees, or update $PROJECT_CONFIG"
+        exit 1
+    fi
+    echo "  $label dir OK ($dir)"
+done
+
+# Check repo_dir is a git repo (if configured)
+if [[ -n "$REPO_DIR" ]]; then
+    if [ ! -d "$REPO_DIR/.git" ]; then
+        echo "Warning: repo_dir ($REPO_DIR) is not a git repository"
+    else
+        echo "  Repo dir OK ($REPO_DIR)"
+    fi
 fi
-echo "  QA dir OK ($QA_DIR)"
 
 echo ""
+
+# --- Determine task ID for branch names ---
+TASKS_FILE="$PROJECT_DIR/projects/$PROJECT/tasks.json"
+TASK_ID=""
+if [[ -f "$TASKS_FILE" ]]; then
+    # Get the first pending or in_progress task ID
+    TASK_ID=$(python3 -c "
+import json
+with open('$TASKS_FILE') as f:
+    data = json.load(f)
+for t in data['tasks']:
+    if t['status'] in ('pending', 'in_progress'):
+        print(t['id'])
+        break
+" 2>/dev/null || true)
+fi
+TASK_ID="${TASK_ID:-task-1}"
+echo "Task branch suffix: $TASK_ID"
+
+# --- Create task branches in worktrees ---
+if [[ -n "$REPO_DIR" && -d "$REPO_DIR/.git" ]]; then
+    echo "Creating task branches..."
+
+    # QA worktree: red/<task-id>
+    if git -C "$QA_DIR" rev-parse --verify "red/$TASK_ID" >/dev/null 2>&1; then
+        git -C "$QA_DIR" checkout "red/$TASK_ID" --quiet
+        echo "  QA: checked out existing red/$TASK_ID"
+    else
+        git -C "$QA_DIR" checkout -b "red/$TASK_ID" --quiet
+        echo "  QA: created red/$TASK_ID"
+    fi
+
+    # Dev worktree: green/<task-id>
+    if git -C "$DEV_DIR" rev-parse --verify "green/$TASK_ID" >/dev/null 2>&1; then
+        git -C "$DEV_DIR" checkout "green/$TASK_ID" --quiet
+        echo "  Dev: checked out existing green/$TASK_ID"
+    else
+        git -C "$DEV_DIR" checkout -b "green/$TASK_ID" --quiet
+        echo "  Dev: created green/$TASK_ID"
+    fi
+
+    # Refactor worktree: blue/<task-id>
+    if git -C "$REFACTOR_DIR" rev-parse --verify "blue/$TASK_ID" >/dev/null 2>&1; then
+        git -C "$REFACTOR_DIR" checkout "blue/$TASK_ID" --quiet
+        echo "  Refactor: checked out existing blue/$TASK_ID"
+    else
+        git -C "$REFACTOR_DIR" checkout -b "blue/$TASK_ID" --quiet
+        echo "  Refactor: created blue/$TASK_ID"
+    fi
+
+    echo ""
+fi
 
 # --- Kill existing session ---
 if tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -96,57 +190,94 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
     fi
 fi
 
+# --- Generate per-project MCP config (bakes in ORCH_PROJECT for the bridge) ---
+PROJECT_MCP_CONFIG="$PROJECT_DIR/shared/$PROJECT/mcp-config.json"
+mkdir -p "$(dirname "$PROJECT_MCP_CONFIG")"
+cat > "$PROJECT_MCP_CONFIG" <<MCPEOF
+{
+  "mcpServers": {
+    "agent-bridge": {
+      "command": "node",
+      "args": ["$PROJECT_DIR/mcp-bridge/index.js"],
+      "env": {
+        "ORCH_PROJECT": "$PROJECT"
+      }
+    }
+  }
+}
+MCPEOF
+MCP_CONFIG="$PROJECT_MCP_CONFIG"
+echo "  MCP config generated ($MCP_CONFIG)"
+
 # --- Clear old mailbox messages ---
 echo "Clearing old mailbox messages..."
 MAILBOX_DIR="$PROJECT_DIR/shared/$PROJECT/mailbox"
-mkdir -p "$MAILBOX_DIR/to_dev" "$MAILBOX_DIR/to_qa"
+mkdir -p "$MAILBOX_DIR/to_dev" "$MAILBOX_DIR/to_qa" "$MAILBOX_DIR/to_refactor"
 rm -f "$MAILBOX_DIR/to_dev/"*.json 2>/dev/null || true
 rm -f "$MAILBOX_DIR/to_qa/"*.json 2>/dev/null || true
+rm -f "$MAILBOX_DIR/to_refactor/"*.json 2>/dev/null || true
 echo "  Mailboxes cleared ($MAILBOX_DIR)"
 
 # --- Create tmux session ---
 echo ""
 echo "Creating tmux session '$SESSION'..."
 
-# Window 0: orchestrator
-tmux new-session -d -s "$SESSION" -n "orch" -c "$PROJECT_DIR/orchestrator"
-echo "  Window 'orch' created"
+# Window creation order determines pane positions after tiled layout:
+#   pane 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
 
-# Window 1: dev agent
+# Session starts with QA (pane 0, top-left)
+tmux new-session -d -s "$SESSION" -n "qa" -c "$QA_DIR"
+echo "  Window 'qa' created (dir: $QA_DIR)"
+
+# Dev (pane 1, top-right)
 tmux new-window -t "$SESSION" -n "dev" -c "$DEV_DIR"
 echo "  Window 'dev' created (dir: $DEV_DIR)"
 
-# Window 2: qa agent
-tmux new-window -t "$SESSION" -n "qa" -c "$QA_DIR"
-echo "  Window 'qa' created (dir: $QA_DIR)"
+# Refactor (pane 2, bottom-left)
+tmux new-window -t "$SESSION" -n "refactor" -c "$REFACTOR_DIR"
+echo "  Window 'refactor' created (dir: $REFACTOR_DIR)"
+
+# Orchestrator (pane 3, bottom-right)
+tmux new-window -t "$SESSION" -n "orch" -c "$PROJECT_DIR/orchestrator"
+echo "  Window 'orch' created"
 
 # --- Launch processes ---
 echo ""
 echo "Launching agents..."
 
+# Start QA agent (RED)
+tmux send-keys -t "$SESSION:qa" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$QA_PROMPT\" $YOLO_FLAG" Enter
+echo "  QA agent started (RED)"
+
+# Start Dev agent (GREEN)
+tmux send-keys -t "$SESSION:dev" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$DEV_PROMPT\" $YOLO_FLAG" Enter
+echo "  Dev agent started (GREEN)"
+
+# Start Refactor agent (BLUE)
+tmux send-keys -t "$SESSION:refactor" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$REFACTOR_PROMPT\" $YOLO_FLAG" Enter
+echo "  Refactor agent started (BLUE)"
+
 # Start orchestrator with project argument
 tmux send-keys -t "$SESSION:orch" "python3 orchestrator.py $PROJECT" Enter
 echo "  Orchestrator started (project: $PROJECT)"
 
-# Start Dev agent (CLAUDE.md in working dir is picked up automatically)
-# Unset CLAUDECODE to avoid "nested session" error when launched from within Claude Code
-# Pass ORCH_PROJECT env var so MCP bridge knows which project's mailbox to use
-tmux send-keys -t "$SESSION:dev" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$DEV_PROMPT\" $YOLO_FLAG" Enter
-echo "  Dev agent started"
-
-# Start QA agent
-tmux send-keys -t "$SESSION:qa" "unset CLAUDECODE && ORCH_PROJECT=$PROJECT claude --mcp-config $MCP_CONFIG --system-prompt \"$QA_PROMPT\" $YOLO_FLAG" Enter
-echo "  QA agent started"
-
-# --- Merge into single window with split panes ---
+# --- Merge into single window with 2x2 split panes ---
 echo ""
-echo "Merging windows into split-pane layout..."
+echo "Merging windows into 2x2 layout..."
 
-# Join dev and qa windows into the orch window as panes
-# Layout: dev and qa side by side on top, orch full-width on bottom
-tmux join-pane -s "$SESSION:dev" -t "$SESSION:orch" -v -b
-tmux join-pane -s "$SESSION:qa" -t "$SESSION:orch.0" -h
-echo "  Tiled layout applied"
+# Layout (after tiled):
+# +----------+----------+
+# | QA_RED(0)|DEV_GRN(1)|
+# +----------+----------+
+# |REFAC (2) | ORCH (3) |
+# +----------+----------+
+
+# Join all into the qa window (first window), then tile
+tmux join-pane -s "$SESSION:dev" -t "$SESSION:qa"
+tmux join-pane -s "$SESSION:refactor" -t "$SESSION:qa"
+tmux join-pane -s "$SESSION:orch" -t "$SESSION:qa"
+tmux select-layout -t "$SESSION:qa" tiled
+echo "  2x2 grid layout applied"
 
 # --- Pane styling ---
 echo "Applying pane styling..."
@@ -155,15 +286,17 @@ echo "Applying pane styling..."
 tmux set-option -t "$SESSION" pane-border-status top
 tmux set-option -t "$SESSION" pane-border-format " #{?pane_active,#[bold],#[dim]}#{pane_title} "
 
-# Set pane titles (pane 0=dev, 1=qa, 2=orch)
-tmux select-pane -t "$SESSION:orch.0" -T "DEV [$PROJECT]"
-tmux select-pane -t "$SESSION:orch.1" -T "QA [$PROJECT]"
-tmux select-pane -t "$SESSION:orch.2" -T "ORCH [$PROJECT]"
+# Set pane titles (pane 0=qa, 1=dev, 2=refactor, 3=orch)
+tmux select-pane -t "$SESSION:qa.0" -T "QA_RED [$PROJECT]"
+tmux select-pane -t "$SESSION:qa.1" -T "DEV_GREEN [$PROJECT]"
+tmux select-pane -t "$SESSION:qa.2" -T "REFACTOR_BLUE [$PROJECT]"
+tmux select-pane -t "$SESSION:qa.3" -T "ORCH [$PROJECT]"
 
-# Per-pane background tinting (subtle, not distracting)
-tmux select-pane -t "$SESSION:orch.0" -P 'bg=colour17'     # dev: very dark blue
-tmux select-pane -t "$SESSION:orch.1" -P 'bg=colour233'    # qa: near-black
-tmux select-pane -t "$SESSION:orch.2" -P 'bg=colour233'    # orch: near-black
+# Per-pane background tinting (color-coded by RGR role)
+tmux select-pane -t "$SESSION:qa.0" -P 'bg=colour52'     # qa: dark red
+tmux select-pane -t "$SESSION:qa.1" -P 'bg=colour22'     # dev: dark green
+tmux select-pane -t "$SESSION:qa.2" -P 'bg=colour17'     # refactor: dark blue
+tmux select-pane -t "$SESSION:qa.3" -P 'bg=colour233'    # orch: near-black
 
 # Border colors
 tmux set-option -t "$SESSION" pane-border-style "fg=colour240"
@@ -178,21 +311,27 @@ echo ""
 echo "Waiting for agents to initialize..."
 sleep 5
 
-# Nudge dev to pick up first task
-tmux send-keys -t "$SESSION:orch.0" -l "You have new messages. Use the check_messages MCP tool with role 'dev' to read and act on them."
+# Nudge QA to pick up first task (RGR starts with RED phase)
+tmux send-keys -t "$SESSION:qa.0" -l "You have new messages. Use the check_messages MCP tool with role 'qa' to read and act on them."
 sleep 0.2
-tmux send-keys -t "$SESSION:orch.0" Enter
-echo "  Nudged Dev to pick up first task"
+tmux send-keys -t "$SESSION:qa.0" Enter
+echo "  Nudged QA to pick up first task (RED phase)"
 
 # --- Attach ---
 echo ""
 echo "================================"
-echo "Session '$SESSION' is running! (project: $PROJECT)"
+echo "RGR Session '$SESSION' is running! (project: $PROJECT)"
 echo ""
 echo "Panes:"
-echo "  0: DEV   - Dev agent (top-left)        [dark blue bg]"
-echo "  1: QA    - QA agent (top-right)        [near-black bg]"
-echo "  2: ORCH  - Orchestrator (bottom)       [near-black bg]"
+echo "  0: QA_RED        - QA agent (top-left)          [dark red bg]"
+echo "  1: DEV_GREEN     - Dev agent (top-right)        [dark green bg]"
+echo "  2: REFACTOR_BLUE - Refactor agent (bottom-left) [dark blue bg]"
+echo "  3: ORCH          - Orchestrator (bottom-right)  [near-black bg]"
+echo ""
+echo "Git branches:"
+echo "  QA:       red/$TASK_ID"
+echo "  Dev:      green/$TASK_ID"
+echo "  Refactor: blue/$TASK_ID"
 echo ""
 echo "Navigation:"
 echo "  Ctrl-b q       - Show pane numbers"
@@ -204,5 +343,5 @@ echo "================================"
 echo ""
 
 # Select the orchestrator pane and attach
-tmux select-pane -t "$SESSION:orch.2"
+tmux select-pane -t "$SESSION:qa.3"
 tmux attach -t "$SESSION"

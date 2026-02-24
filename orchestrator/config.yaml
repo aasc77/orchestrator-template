@@ -27,3 +27,12 @@ logging:
 tmux:
   nudge_prompt: "You have new messages. Use the check_messages MCP tool with your role to read and act on them."
   nudge_cooldown_seconds: 30
+
+# Agent defaults (pane numbers: qa=0, dev=1, refactor=2, orch=3)
+agents:
+  qa:
+    pane: qa.0
+  dev:
+    pane: qa.1
+  refactor:
+    pane: qa.2

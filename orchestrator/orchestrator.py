@@ -1,25 +1,19 @@
 #!/usr/bin/env python3
 """
-Multi-Agent Orchestrator (tmux + MCP/Mailbox)
+RGR (Red-Green-Refactor) Orchestrator (tmux + MCP/Mailbox + Git Worktrees)
 
-Coordinates Dev and QA Claude Code agents through the shared mailbox.
-Uses tmux send-keys to nudge agents when new messages arrive.
+Coordinates three Claude Code agents through a shared mailbox and git worktrees:
+  - QA (RED): writes failing tests in .worktrees/qa on red/<task> branch
+  - Dev (GREEN): writes minimum code in .worktrees/dev on green/<task> branch
+  - Refactor (BLUE): cleans up code in .worktrees/refactor on blue/<task> branch
+
+Git flow:
+  main ──> red/<task> ──> green/<task> ──> blue/<task> ──> merge into main
 
 Usage:
   python3 orchestrator.py <project>
 
   where <project> matches a directory under projects/ (e.g., example).
-
-Flow:
-  1. Orchestrator writes task assignment to Dev's mailbox
-  2. tmux_nudge("dev") sends "check your messages" to Dev's terminal
-  3. Dev picks it up, codes, calls send_to_qa
-  4. Orchestrator sees new message in QA's mailbox
-  5. Orchestrator writes "go test" instruction to QA's mailbox
-  6. tmux_nudge("qa") sends "check your messages" to QA's terminal
-  7. QA picks it up, tests, calls send_to_dev
-  8. Orchestrator sees results in Dev's mailbox, asks LLM what to do
-  9. Repeat until pass or stuck
 """
 
 import argparse
@@ -36,8 +30,17 @@ from pathlib import Path
 from llm_client import OllamaClient
 from mailbox_watcher import MailboxWatcher
 
+from enum import Enum
+
+class RGRState(Enum):
+    IDLE = "idle"
+    WAITING_QA_RED = "waiting_qa_red"
+    WAITING_DEV_GREEN = "waiting_dev_green"
+    WAITING_REFACTOR_BLUE = "waiting_refactor_blue"
+    BLOCKED = "blocked"
+
 # --- Parse CLI args ---
-parser = argparse.ArgumentParser(description="Multi-Agent Orchestrator")
+parser = argparse.ArgumentParser(description="RGR Orchestrator")
 parser.add_argument("project", help="Project name (matches projects/<name>/)")
 args = parser.parse_args()
 
@@ -76,6 +79,8 @@ for key, val in project_config.items():
 # --- Resolve per-project paths ---
 mailbox_dir = str(root_dir / "shared" / args.project / "mailbox")
 tasks_path = project_dir / "tasks.json"
+repo_dir = config.get("repo_dir", "")
+project_mode = config.get("mode", "new")
 
 # --- Setup Logging ---
 logging.basicConfig(
@@ -97,11 +102,27 @@ llm = OllamaClient(
 
 mailbox = MailboxWatcher(mailbox_dir=mailbox_dir)
 
+# --- Session Report ---
+session_report_path = project_dir / "session-report.md"
+
+
+def log_to_report(entry: str):
+    """Append a timestamped entry to the session report."""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with open(session_report_path, "a") as f:
+        f.write(f"\n### [{timestamp}] {entry}\n")
+
+
 # --- Load Tasks ---
 with open(tasks_path) as f:
     tasks_data = json.load(f)
 
 tasks = tasks_data["tasks"]
+
+rgr_state = RGRState.IDLE
+
+# --- Track current task branch suffix ---
+current_task_id = None
 
 # --- tmux nudge config ---
 tmux_session = config.get("tmux", {}).get("session_name", "devqa")
@@ -117,6 +138,122 @@ for agent_name, agent_cfg in config.get("agents", {}).items():
     if pane:
         _agent_pane_targets[agent_name] = f"{tmux_session}:{pane}"
 _last_nudge = {}
+
+
+# --- Git helpers ---
+def run_git_command(cwd: str, *git_args) -> tuple[bool, str]:
+    """Run a git command in the given directory.
+
+    Returns (success, output) tuple.
+    """
+    cmd = ["git", "-C", cwd] + list(git_args)
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        output = (result.stdout + result.stderr).strip()
+        if result.returncode != 0:
+            logger.warning(f"Git command failed: {' '.join(cmd)}\n  {output}")
+            return False, output
+        return True, output
+    except subprocess.TimeoutExpired:
+        logger.error(f"Git command timed out: {' '.join(cmd)}")
+        return False, "Command timed out"
+    except subprocess.SubprocessError as e:
+        logger.error(f"Git command error: {e}")
+        return False, str(e)
+
+
+def get_default_branch(repo_path: str) -> str:
+    """Detect the default branch name (main, master, etc.)."""
+    success, output = run_git_command(repo_path, "symbolic-ref", "--short", "HEAD")
+    return output.strip() if success else "main"
+
+
+# Resolve default branch at startup (used by merge operations)
+default_branch = get_default_branch(repo_dir) if repo_dir else "main"
+
+
+def git_merge_branch(worktree_path: str, source_branch: str) -> tuple[bool, str]:
+    """Merge a source branch into the current branch of a worktree.
+
+    Returns (success, output). On conflict, aborts the merge.
+    """
+    success, output = run_git_command(worktree_path, "merge", source_branch, "--no-edit")
+    if not success:
+        if "CONFLICT" in output or "conflict" in output.lower():
+            logger.error(f"Merge conflict merging {source_branch} into {worktree_path}")
+            # Abort the failed merge to leave worktree clean
+            run_git_command(worktree_path, "merge", "--abort")
+            return False, f"MERGE CONFLICT: {output}"
+        return False, output
+    return True, output
+
+
+def git_merge_into_default(repo_path: str, source_branch: str) -> tuple[bool, str]:
+    """Merge a branch into the default branch in the main repo directory.
+
+    Stashes any uncommitted changes before checkout to prevent
+    'untracked working tree files would be overwritten' errors.
+
+    Returns (success, output).
+    """
+    # Stash any uncommitted changes (including untracked files)
+    stashed = False
+    _, status_output = run_git_command(repo_path, "status", "--porcelain")
+    if status_output.strip():
+        success, stash_output = run_git_command(repo_path, "stash", "push", "--include-untracked", "-m", f"orchestrator-auto-stash-before-{source_branch}")
+        if success and "No local changes" not in stash_output:
+            stashed = True
+            logger.info(f"Stashed uncommitted changes in {repo_path}")
+
+    # Ensure we're on the default branch
+    success, output = run_git_command(repo_path, "checkout", default_branch)
+    if not success:
+        if stashed:
+            run_git_command(repo_path, "stash", "pop")
+        return False, f"Failed to checkout {default_branch}: {output}"
+
+    success, output = run_git_command(repo_path, "merge", source_branch, "--no-edit")
+    if not success:
+        if "CONFLICT" in output or "conflict" in output.lower():
+            logger.error(f"Merge conflict merging {source_branch} into {default_branch}")
+            run_git_command(repo_path, "merge", "--abort")
+            if stashed:
+                run_git_command(repo_path, "stash", "pop")
+            return False, f"MERGE CONFLICT: {output}"
+        if stashed:
+            run_git_command(repo_path, "stash", "pop")
+        return False, output
+
+    # Merge succeeded -- drop the stash (merged content supersedes it)
+    if stashed:
+        run_git_command(repo_path, "stash", "drop")
+        logger.info("Dropped auto-stash after successful merge")
+
+    return True, output
+
+
+def tmux_clear(agent: str):
+    """Send /clear to an agent's tmux pane to reset context."""
+    target = _agent_pane_targets.get(agent, f"{tmux_session}:{agent}")
+    try:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "-l", "/clear"],
+            capture_output=True, text=True, timeout=5,
+        )
+        time.sleep(0.2)
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "Enter"],
+            capture_output=True, text=True, timeout=5,
+        )
+        logger.info(f"Sent /clear to {agent} (target={target})")
+        time.sleep(1)  # Give Claude Code a moment to process
+    except subprocess.SubprocessError as e:
+        logger.warning(f"Failed to send /clear to {agent}: {e}")
 
 
 def tmux_nudge(agent: str):
@@ -217,15 +354,16 @@ def interpret_natural_command(text: str):
     system = """You are the orchestrator's command interpreter. The human typed a message in the orchestrator console.
 Interpret their intent and respond with JSON only:
 {
-  "action": "msg_dev" | "msg_qa" | "nudge_dev" | "nudge_qa" | "skip" | "pause" | "resume" | "status" | "reply",
-  "text": "text to send to agent (for msg_dev/msg_qa) or reply to show the human (for reply/status)",
+  "action": "msg_dev" | "msg_qa" | "msg_refactor" | "nudge_dev" | "nudge_qa" | "nudge_refactor" | "skip" | "pause" | "resume" | "status" | "reply",
+  "text": "text to send to agent (for msg_dev/msg_qa/msg_refactor) or reply to show the human (for reply/status)",
   "reasoning": "brief explanation"
 }
 
 Actions:
 - msg_dev: send text to Dev agent's terminal
 - msg_qa: send text to QA agent's terminal
-- nudge_dev/nudge_qa: remind agent to check messages
+- msg_refactor: send text to Refactor agent's terminal
+- nudge_dev/nudge_qa/nudge_refactor: remind agent to check messages
 - skip: skip current task
 - pause/resume: pause/resume polling
 - status: show current state (put a summary in "text")
@@ -248,12 +386,17 @@ Keep "text" concise and actionable."""
         send_to_pane("dev", reply_text)
     elif action == "msg_qa":
         send_to_pane("qa", reply_text)
+    elif action == "msg_refactor":
+        send_to_pane("refactor", reply_text)
     elif action == "nudge_dev":
         _last_nudge.pop("dev", None)
         tmux_nudge("dev")
     elif action == "nudge_qa":
         _last_nudge.pop("qa", None)
         tmux_nudge("qa")
+    elif action == "nudge_refactor":
+        _last_nudge.pop("refactor", None)
+        tmux_nudge("refactor")
     elif action == "skip":
         handle_command("skip")
     elif action == "pause":
@@ -279,17 +422,17 @@ def handle_command(cmd: str):
     command = parts[0].lower()
 
     if command == "help":
-        print("\n--- Orchestrator Commands ---")
-        print("  status          - Current task and progress")
-        print("  tasks           - List all tasks with status")
-        print("  skip            - Skip current stuck/in-progress task")
-        print("  nudge dev|qa    - Manually nudge an agent")
-        print("  msg dev|qa TEXT - Send text to an agent's pane")
-        print("  pause           - Pause mailbox polling")
-        print("  resume          - Resume mailbox polling")
-        print("  log             - Show last 10 log entries")
-        print("  help            - Show this help")
-        print("-----------------------------\n")
+        print("\n--- RGR Orchestrator Commands ---")
+        print("  status                    - Current task and progress")
+        print("  tasks                     - List all tasks with status")
+        print("  skip                      - Skip current stuck/in-progress task")
+        print("  nudge dev|qa|refactor     - Manually nudge an agent")
+        print("  msg dev|qa|refactor TEXT  - Send text to an agent's pane")
+        print("  pause                     - Pause mailbox polling")
+        print("  resume                    - Resume mailbox polling")
+        print("  log                       - Show last 10 log entries")
+        print("  help                      - Show this help")
+        print("----------------------------------\n")
 
     elif command == "status":
         idx, task = get_current_task()
@@ -304,6 +447,10 @@ def handle_command(cmd: str):
         else:
             print("  No active task")
         print(f"  Paused: {_paused}")
+        print(f"  RGR State: {rgr_state.value}")
+        print(f"  Default branch: {default_branch}")
+        if current_task_id:
+            print(f"  Branches: red/{current_task_id}, green/{current_task_id}, blue/{current_task_id}")
         print(f"--------------\n")
 
     elif command == "tasks":
@@ -323,23 +470,23 @@ def handle_command(cmd: str):
             next_idx, next_task = get_current_task()
             if next_task:
                 print(f"  Next task: {next_task['id']}: {next_task['title']}")
-                assign_task_to_dev(next_task)
+                assign_task_to_qa(next_task)
             else:
                 print("  No more tasks")
         else:
             print("  No active task to skip")
 
     elif command == "nudge":
-        if len(parts) < 2 or parts[1] not in ("dev", "qa"):
-            print("  Usage: nudge dev|qa")
+        if len(parts) < 2 or parts[1] not in ("dev", "qa", "refactor"):
+            print("  Usage: nudge dev|qa|refactor")
         else:
             agent = parts[1]
             _last_nudge.pop(agent, None)  # clear cooldown
             tmux_nudge(agent)
 
     elif command == "msg":
-        if len(parts) < 3 or parts[1] not in ("dev", "qa"):
-            print("  Usage: msg dev|qa <text to send>")
+        if len(parts) < 3 or parts[1] not in ("dev", "qa", "refactor"):
+            print("  Usage: msg dev|qa|refactor <text to send>")
         else:
             send_to_pane(parts[1], parts[2])
 
@@ -429,113 +576,310 @@ Data: {json.dumps(event_data, indent=2)}
     return context
 
 
-def assign_task_to_dev(task: dict):
-    """Write a task assignment to Dev's mailbox."""
+def create_task_branches(task_id: str):
+    """Create red/green/blue branches for a new task in each worktree.
+
+    Always branches from the default branch (main) to ensure a clean start.
+    Deletes stale branches from previous runs before creating.
+    """
+    if not repo_dir:
+        return
+    agents_cfg = config.get("agents", {})
+    branch_map = {
+        "qa": f"red/{task_id}",
+        "dev": f"green/{task_id}",
+        "refactor": f"blue/{task_id}",
+    }
+    for agent, branch in branch_map.items():
+        wt_dir = agents_cfg.get(agent, {}).get("working_dir", "")
+        if not wt_dir:
+            continue
+        # First checkout the default branch to have a clean base
+        run_git_command(wt_dir, "checkout", default_branch)
+        # Delete stale branch from previous runs if it exists
+        exists, _ = run_git_command(wt_dir, "rev-parse", "--verify", branch)
+        if exists:
+            run_git_command(wt_dir, "branch", "-D", branch)
+            logger.info(f"Deleted stale {branch} in {agent} worktree")
+        # Create fresh branch from default branch
+        success, output = run_git_command(wt_dir, "checkout", "-b", branch)
+        if success:
+            logger.info(f"Created {branch} from {default_branch} in {agent} worktree")
+        else:
+            logger.warning(f"Failed to create {branch} in {agent}: {output}")
+
+
+def assign_task_to_qa(task: dict):
+    """Write a task assignment to QA's mailbox."""
+    global rgr_state, current_task_id
+
+    # Clear agent contexts and create task branches for new tasks
+    if current_task_id is not None and current_task_id != task["id"]:
+        for agent in ("qa", "dev", "refactor"):
+            tmux_clear(agent)
+
+    current_task_id = task["id"]
+    create_task_branches(task["id"])
+
+    if project_mode == "existing":
+        source_file = task.get("source_file", "")
+        instructions = (
+            f"Write characterization tests for {source_file}. Read the source file from your "
+            "worktree, identify all public functions/classes, then write tests that PASS against "
+            "the current implementation. When your tests are ready and confirmed PASSING, commit "
+            "them with: git add . && git commit -m 'red: characterize <file>' "
+            "then use the send_to_dev MCP tool to notify Dev."
+        )
+        phase_label = "characterization phase"
+    else:
+        source_file = ""
+        instructions = (
+            "Write failing tests for this requirement. When your tests are ready "
+            "and confirmed FAILING (RED), commit them with: git add . && git commit -m 'red: <description>' "
+            "then use the send_to_dev MCP tool to notify Dev."
+        )
+        phase_label = "RED phase"
+
     content = {
         "task_id": task["id"],
         "title": task["title"],
         "description": task["description"],
         "acceptance_criteria": task.get("acceptance_criteria", []),
-        "instructions": (
-            "Implement this task. When done, use the send_to_qa MCP tool "
-            "to notify QA with a summary, files changed, and test instructions."
-        ),
+        "instructions": instructions,
     }
-    write_to_mailbox("dev", "task_assignment", content)
-    tmux_nudge("dev")
+    if source_file:
+        content["source_file"] = source_file
+
+    write_to_mailbox("qa", "task_assignment", content)
+    tmux_nudge("qa")
     task["status"] = "in_progress"
     save_tasks()
-    logger.info(f"Assigned task {task['id']} to Dev")
+    rgr_state = RGRState.WAITING_QA_RED
+    logger.info(f"Assigned task {task['id']} to QA ({phase_label})")
+    log_to_report(f"**Task assigned: {task['id']}** -- {task['title']}")
 
 
 def handle_qa_message(message: dict):
-    """Handle a message from QA (test results arriving in Dev's mailbox)."""
+    """Handle message from QA: failing tests ready -> merge into Dev, nudge Dev (GREEN phase)."""
+    global rgr_state
     idx, task = get_current_task()
     if not task:
         logger.warning("Received QA message but no active task")
+        return
+
+    content = message.get("content", {})
+    task_id = current_task_id or task["id"]
+
+    # Merge red/<task> branch into Dev worktree
+    dev_dir = config.get("agents", {}).get("dev", {}).get("working_dir", "")
+    if repo_dir and dev_dir:
+        red_branch = f"red/{task_id}"
+        logger.info(f"Merging {red_branch} into Dev worktree...")
+        success, output = git_merge_branch(dev_dir, red_branch)
+        if not success:
+            rgr_state = RGRState.BLOCKED
+            logger.error(f"Failed to merge {red_branch} into Dev: {output}")
+            print(f"\nBLOCKED: Git merge failed ({red_branch} -> Dev)")
+            print(f"  {output}")
+            print(f"  Resolve manually in {dev_dir} then type 'resume'\n")
+            return
+        logger.info(f"Merged {red_branch} into Dev worktree successfully")
+
+    # Forward QA's tests to Dev
+    if project_mode == "existing":
+        dev_instructions = (
+            "QA wrote characterization tests that PASS against the existing code. They have been "
+            "merged into your worktree. Your job is to VERIFY the tests are correct and thorough -- "
+            "NOT to refactor or rewrite the source code. Review the test coverage, add any missing "
+            "edge cases, and ensure tests accurately document the current behavior. "
+            "Do NOT modify the source code. When done, commit with: "
+            "git add . && git commit -m 'green: <description>' then use send_to_refactor."
+        )
+        phase_label = "characterization review"
+    else:
+        dev_instructions = (
+            "QA has written failing tests (RED) and they have been merged into your worktree. "
+            "Write the minimum code to make them pass (GREEN). When all tests pass, commit with: "
+            "git add . && git commit -m 'green: <description>' then use send_to_refactor."
+        )
+        phase_label = "GREEN phase"
+
+    dev_content = {
+        "task_id": task["id"],
+        "summary": content.get("summary", ""),
+        "files_changed": content.get("files_changed", []),
+        "test_instructions": content.get("test_instructions", ""),
+        "branch": f"red/{task_id}",
+        "instructions": dev_instructions,
+    }
+    source_file = task.get("source_file", "")
+    if source_file:
+        dev_content["source_file"] = source_file
+
+    write_to_mailbox("dev", "test_request", dev_content)
+    tmux_nudge("dev")
+    rgr_state = RGRState.WAITING_DEV_GREEN
+    logger.info(f"QA tests ready for task {task['id']} -> merged into Dev, forwarded ({phase_label})")
+    log_to_report(f"**QA (RED) complete: {task['id']}**\n\n{content.get('summary', 'No summary')}\n")
+
+
+def handle_dev_message(message: dict):
+    """Handle message from Dev: code passes tests -> merge into Refactor, nudge Refactor (BLUE phase)."""
+    global rgr_state
+    content = message.get("content", {})
+
+    idx, task = get_current_task()
+    if not task:
+        logger.warning("Received Dev message but no active task")
+        return
+
+    task_id = current_task_id or task["id"]
+
+    # Merge green/<task> branch into Refactor worktree
+    refactor_dir = config.get("agents", {}).get("refactor", {}).get("working_dir", "")
+    if repo_dir and refactor_dir:
+        green_branch = f"green/{task_id}"
+        logger.info(f"Merging {green_branch} into Refactor worktree...")
+        success, output = git_merge_branch(refactor_dir, green_branch)
+        if not success:
+            rgr_state = RGRState.BLOCKED
+            logger.error(f"Failed to merge {green_branch} into Refactor: {output}")
+            print(f"\nBLOCKED: Git merge failed ({green_branch} -> Refactor)")
+            print(f"  {output}")
+            print(f"  Resolve manually in {refactor_dir} then type 'resume'\n")
+            return
+        logger.info(f"Merged {green_branch} into Refactor worktree successfully")
+
+    # Forward Dev's code to Refactor
+    if project_mode == "existing":
+        refactor_instructions = (
+            "Legacy code with characterization tests has been merged into your worktree. "
+            "Refactor the legacy code for quality: address TODO comments from QA, improve DRY, "
+            "naming, type hints, and docs. All characterization tests must stay GREEN. "
+            "Commit with: git add . && git commit -m 'blue: <description>' "
+            "then use send_refactor_complete to report results."
+        )
+        phase_label = "legacy refactor"
+    else:
+        refactor_instructions = (
+            "Dev has written code that passes the tests (GREEN) and it has been merged into your worktree. "
+            "Refactor the code for quality (DRY, naming, docs) without changing behavior. Run tests to "
+            "verify they still pass. Commit with: git add . && git commit -m 'blue: <description>' "
+            "then use send_refactor_complete to report results."
+        )
+        phase_label = "BLUE phase"
+
+    refactor_content = {
+        "task_id": task["id"],
+        "summary": content.get("summary", ""),
+        "files_changed": content.get("files_changed", []),
+        "test_commands": content.get("test_commands", content.get("test_instructions", "")),
+        "branch": f"green/{task_id}",
+        "instructions": refactor_instructions,
+    }
+    source_file = task.get("source_file", "")
+    if source_file:
+        refactor_content["source_file"] = source_file
+
+    write_to_mailbox("refactor", "refactor_request", refactor_content)
+    tmux_nudge("refactor")
+    rgr_state = RGRState.WAITING_REFACTOR_BLUE
+    logger.info(f"Dev code ready for task {task['id']} -> merged into Refactor, forwarded ({phase_label})")
+    log_to_report(f"**Dev (GREEN) complete: {task['id']}**\n\n{content.get('summary', 'No summary')}\n")
+
+
+def handle_refactor_message(message: dict):
+    """Handle message from Refactor: cleanup done -> merge into main or retry."""
+    global rgr_state
+    idx, task = get_current_task()
+    if not task:
+        logger.warning("Received Refactor message but no active task")
         return
 
     task["attempts"] += 1
     content = message.get("content", {})
     status = content.get("status", "unknown")
 
-    context = build_context("qa_results", {
-        "status": status,
-        "summary": content.get("summary", ""),
-        "bugs": content.get("bugs", []),
-        "tests_run": content.get("tests_run", ""),
-    })
+    if status == "pass":
+        task_id = current_task_id or task["id"]
 
-    decision = llm.decide(context)
-    action = decision.get("action", "flag_human")
+        # Merge blue/<task> into default branch
+        if repo_dir:
+            blue_branch = f"blue/{task_id}"
+            logger.info(f"Merging {blue_branch} into {default_branch}...")
+            success, output = git_merge_into_default(repo_dir, blue_branch)
+            if not success:
+                rgr_state = RGRState.BLOCKED
+                logger.error(f"Failed to merge {blue_branch} into {default_branch}: {output}")
+                print(f"\nBLOCKED: Git merge into {default_branch} failed ({blue_branch})")
+                print(f"  {output}")
+                print(f"  Resolve manually in {repo_dir} then type 'resume'\n")
+                return
+            logger.info(f"Merged {blue_branch} into {default_branch} successfully")
 
-    if action == "next_task":
+        # Refactor succeeded -- task complete
         task["status"] = "completed"
         save_tasks()
-        logger.info(f"Task {task['id']} COMPLETED")
+        rgr_state = RGRState.IDLE
+        logger.info(f"Task {task['id']} COMPLETED (RGR cycle done)")
+        log_to_report(f"**Refactor (BLUE) complete: {task['id']}**\n\n{content.get('summary', 'No summary')}\n")
+        log_to_report(f"**TASK COMPLETED: {task['id']}** -- {task['title']}\n")
 
         next_idx, next_task = get_current_task()
         if next_task:
-            assign_task_to_dev(next_task)
+            assign_task_to_qa(next_task)
         else:
             logger.info("ALL TASKS COMPLETED!")
-            write_to_mailbox("dev", "all_done", {"message": "All tasks complete! Great work."})
-            tmux_nudge("dev")
-            write_to_mailbox("qa", "all_done", {"message": "All tasks complete! Great work."})
-            tmux_nudge("qa")
+            for agent in ("qa", "dev", "refactor"):
+                write_to_mailbox(agent, "all_done", {"message": "All tasks complete! Great work."})
+                tmux_nudge(agent)
 
-    elif action == "send_to_dev":
+    elif status == "fail":
+        # Refactor broke tests -- send back to Dev
         if task["attempts"] >= config["tasks"]["max_attempts_per_task"]:
             logger.warning(f"Task {task['id']} exceeded max attempts")
             task["status"] = "stuck"
             save_tasks()
+            rgr_state = RGRState.IDLE
             print(f"\nHUMAN REVIEW NEEDED: Task {task['id']} - {task['title']}")
             print(f"   Failed {task['attempts']} times. Check orchestrator.log.\n")
+            log_to_report(f"**TASK STUCK: {task['id']}** -- exceeded max attempts ({task['attempts']})\n")
         else:
-            fix_msg = decision.get("message", "QA found bugs. Check messages and fix.")
             write_to_mailbox("dev", "fix_required", {
                 "task_id": task["id"],
-                "message": fix_msg,
-                "bugs": content.get("bugs", []),
+                "message": "Refactor broke tests. Fix the issues and re-send to refactor.",
+                "issues": content.get("issues", ""),
                 "instructions": (
-                    "Fix the issues reported by QA. When done, use send_to_qa "
-                    "again to notify QA for re-testing."
+                    "The Refactor agent's changes broke the tests. Fix the code so tests "
+                    "pass again, then commit and use send_to_refactor to hand off for another attempt."
                 ),
             })
             tmux_nudge("dev")
-            logger.info(f"Task {task['id']} attempt {task['attempts']} - sent back to Dev")
+            rgr_state = RGRState.WAITING_DEV_GREEN
+            logger.info(f"Task {task['id']} attempt {task['attempts']} - refactor failed, back to Dev")
 
-    elif action == "flag_human":
-        task["status"] = "stuck"
-        save_tasks()
-        msg = decision.get("message", "Unknown issue")
-        print(f"\nHUMAN REVIEW NEEDED: {msg}\n")
-        logger.warning(f"Flagged for human: {msg}")
+    else:
+        # Unknown status -- ask LLM
+        context = build_context("refactor_results", {
+            "status": status,
+            "summary": content.get("summary", ""),
+        })
+        decision = llm.decide(context)
+        action = decision.get("action", "flag_human")
 
-
-def handle_dev_message(message: dict):
-    """Handle a message from Dev (code ready, arriving in QA's mailbox)."""
-    content = message.get("content", {})
-
-    # Write instruction to QA's mailbox
-    write_to_mailbox("qa", "test_request", {
-        "summary": content.get("summary", ""),
-        "files_changed": content.get("files_changed", []),
-        "test_instructions": content.get("test_instructions", ""),
-        "instructions": (
-            "New code is ready for testing. Use check_messages to see what "
-            "Dev built and how to test it. Run your tests and use send_to_dev "
-            "to report results (pass/fail/partial with bug details)."
-        ),
-    })
-    tmux_nudge("qa")
-    logger.info("Notified QA of new code ready for testing")
+        if action == "flag_human":
+            task["status"] = "stuck"
+            save_tasks()
+            rgr_state = RGRState.IDLE
+            msg = decision.get("message", "Unknown issue")
+            print(f"\nHUMAN REVIEW NEEDED: {msg}\n")
+            logger.warning(f"Flagged for human: {msg}")
 
 
 def main():
     """Main orchestrator loop."""
     logger.info("=" * 60)
-    logger.info(f"Multi-Agent Orchestrator Starting — project: {args.project}")
+    logger.info(f"RGR Orchestrator Starting — project: {args.project}")
     logger.info("=" * 60)
 
     # Pre-flight: check LLM
@@ -544,8 +888,21 @@ def main():
         logger.error(f"   Run: ollama pull {config['llm']['model']}")
         sys.exit(1)
     logger.info(f"LLM ready ({config['llm']['model']})")
+    logger.info(f"Project mode: {project_mode}")
     logger.info(f"Mailbox dir: {mailbox_dir}")
+
+    # Initialize session report
+    with open(session_report_path, "a") as f:
+        f.write(f"\n---\n\n# Session: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"- **Project:** {args.project}\n")
+        f.write(f"- **Mode:** {project_mode}\n")
+        f.write(f"- **Tasks:** {len(tasks)}\n\n")
     logger.info(f"Tasks file: {tasks_path}")
+    if repo_dir:
+        logger.info(f"Repo dir: {repo_dir}")
+        logger.info(f"Default branch: {default_branch}")
+    else:
+        logger.warning("No repo_dir configured — git operations disabled")
 
     # Pre-flight: check tmux session
     if check_tmux_session():
@@ -557,7 +914,7 @@ def main():
     idx, first_task = get_current_task()
     if first_task:
         logger.info(f"Starting with task: {first_task['title']}")
-        assign_task_to_dev(first_task)
+        assign_task_to_qa(first_task)
     else:
         logger.info("No pending tasks found — waiting for new tasks or commands")
 
@@ -584,17 +941,36 @@ def main():
 
             # Skip mailbox polling if paused
             if not _paused:
-                # Check for messages from Dev -> QA (Dev sent code for testing)
-                for dev_msg in mailbox.check_new_messages("qa"):
-                    if dev_msg.get("from") != "orchestrator":
-                        logger.info(f"Dev sent: {dev_msg['type']}")
-                        handle_dev_message(dev_msg)
-
-                # Check for messages from QA -> Dev (QA sent test results)
-                for qa_msg in mailbox.check_new_messages("dev"):
+                # Check QA's mailbox -- messages from Dev (code ready for testing)
+                # In RGR, QA mailbox receives task assignments from orchestrator
+                for qa_msg in mailbox.check_new_messages("qa"):
                     if qa_msg.get("from") != "orchestrator":
-                        logger.info(f"QA sent: {qa_msg['type']}")
-                        handle_qa_message(qa_msg)
+                        logger.info(f"Message in QA mailbox from {qa_msg.get('from')}: {qa_msg['type']}")
+
+                # Check Dev's mailbox -- messages from QA (tests) or Refactor (results)
+                for dev_msg in mailbox.check_new_messages("dev"):
+                    sender = dev_msg.get("from", "")
+                    if sender == "orchestrator":
+                        continue
+                    elif sender == "qa":
+                        logger.info(f"QA sent tests: {dev_msg['type']}")
+                        handle_qa_message(dev_msg)
+                    elif sender == "refactor":
+                        logger.info(f"Refactor sent results: {dev_msg['type']}")
+                        handle_refactor_message(dev_msg)
+                    else:
+                        logger.info(f"Unknown sender '{sender}' in Dev mailbox: {dev_msg['type']}")
+
+                # Check Refactor's mailbox -- messages from Dev (code ready for refactoring)
+                for ref_msg in mailbox.check_new_messages("refactor"):
+                    sender = ref_msg.get("from", "")
+                    if sender == "orchestrator":
+                        continue
+                    elif sender == "dev":
+                        logger.info(f"Dev sent code to refactor: {ref_msg['type']}")
+                        handle_dev_message(ref_msg)
+                    else:
+                        logger.info(f"Message in Refactor mailbox from {sender}: {ref_msg['type']}")
 
                 # Check if all tasks done
                 all_done = all(
@@ -603,7 +979,7 @@ def main():
                 if all_done and any(t["status"] == "completed" for t in tasks):
                     completed = sum(1 for t in tasks if t["status"] == "completed")
                     stuck = sum(1 for t in tasks if t["status"] == "stuck")
-                    logger.info(f"All tasks processed: {completed} completed, {stuck} stuck — still polling")
+                    logger.info(f"All tasks processed: {completed} completed, {stuck} stuck -- still polling")
 
             time.sleep(poll_interval)
 
