@@ -102,6 +102,17 @@ llm = OllamaClient(
 
 mailbox = MailboxWatcher(mailbox_dir=mailbox_dir)
 
+# --- Session Report ---
+session_report_path = project_dir / "session-report.md"
+
+
+def log_to_report(entry: str):
+    """Append a timestamped entry to the session report."""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with open(session_report_path, "a") as f:
+        f.write(f"\n### [{timestamp}] {entry}\n")
+
+
 # --- Load Tasks ---
 with open(tasks_path) as f:
     tasks_data = json.load(f)
@@ -644,6 +655,7 @@ def assign_task_to_qa(task: dict):
     save_tasks()
     rgr_state = RGRState.WAITING_QA_RED
     logger.info(f"Assigned task {task['id']} to QA ({phase_label})")
+    log_to_report(f"**Task assigned: {task['id']}** -- {task['title']}")
 
 
 def handle_qa_message(message: dict):
@@ -707,6 +719,7 @@ def handle_qa_message(message: dict):
     tmux_nudge("dev")
     rgr_state = RGRState.WAITING_DEV_GREEN
     logger.info(f"QA tests ready for task {task['id']} -> merged into Dev, forwarded ({phase_label})")
+    log_to_report(f"**QA (RED) complete: {task['id']}**\n\n{content.get('summary', 'No summary')}\n")
 
 
 def handle_dev_message(message: dict):
@@ -771,6 +784,7 @@ def handle_dev_message(message: dict):
     tmux_nudge("refactor")
     rgr_state = RGRState.WAITING_REFACTOR_BLUE
     logger.info(f"Dev code ready for task {task['id']} -> merged into Refactor, forwarded ({phase_label})")
+    log_to_report(f"**Dev (GREEN) complete: {task['id']}**\n\n{content.get('summary', 'No summary')}\n")
 
 
 def handle_refactor_message(message: dict):
@@ -807,6 +821,8 @@ def handle_refactor_message(message: dict):
         save_tasks()
         rgr_state = RGRState.IDLE
         logger.info(f"Task {task['id']} COMPLETED (RGR cycle done)")
+        log_to_report(f"**Refactor (BLUE) complete: {task['id']}**\n\n{content.get('summary', 'No summary')}\n")
+        log_to_report(f"**TASK COMPLETED: {task['id']}** -- {task['title']}\n")
 
         next_idx, next_task = get_current_task()
         if next_task:
@@ -826,6 +842,7 @@ def handle_refactor_message(message: dict):
             rgr_state = RGRState.IDLE
             print(f"\nHUMAN REVIEW NEEDED: Task {task['id']} - {task['title']}")
             print(f"   Failed {task['attempts']} times. Check orchestrator.log.\n")
+            log_to_report(f"**TASK STUCK: {task['id']}** -- exceeded max attempts ({task['attempts']})\n")
         else:
             write_to_mailbox("dev", "fix_required", {
                 "task_id": task["id"],
@@ -872,6 +889,13 @@ def main():
     logger.info(f"LLM ready ({config['llm']['model']})")
     logger.info(f"Project mode: {project_mode}")
     logger.info(f"Mailbox dir: {mailbox_dir}")
+
+    # Initialize session report
+    with open(session_report_path, "a") as f:
+        f.write(f"\n---\n\n# Session: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"- **Project:** {args.project}\n")
+        f.write(f"- **Mode:** {project_mode}\n")
+        f.write(f"- **Tasks:** {len(tasks)}\n\n")
     logger.info(f"Tasks file: {tasks_path}")
     if repo_dir:
         logger.info(f"Repo dir: {repo_dir}")
