@@ -1,10 +1,20 @@
 #!/bin/bash
 set -e
 
-PROJECT=${1:?"Usage: $0 <project> [--yolo]  (e.g., example)"}
+PROJECT=""
 YOLO_FLAG=""
-if [[ "${2:-}" == "--yolo" ]]; then
-    YOLO_FLAG="--dangerously-skip-permissions"
+
+for arg in "$@"; do
+    case "$arg" in
+        --yolo) YOLO_FLAG="--dangerously-skip-permissions" ;;
+        *) PROJECT="$arg" ;;
+    esac
+done
+
+if [[ -z "$PROJECT" ]]; then
+    echo "Usage: $0 <project> [--yolo]  (e.g., example)"
+    echo "  --yolo      Skip Claude Code permission prompts"
+    exit 1
 fi
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -292,11 +302,28 @@ tmux select-pane -t "$SESSION:qa.1" -T "DEV_GREEN [$PROJECT]"
 tmux select-pane -t "$SESSION:qa.2" -T "REFACTOR_BLUE [$PROJECT]"
 tmux select-pane -t "$SESSION:qa.3" -T "ORCH [$PROJECT]"
 
-# Per-pane background tinting (color-coded by RGR role)
-tmux select-pane -t "$SESSION:qa.0" -P 'bg=colour52'     # qa: dark red
-tmux select-pane -t "$SESSION:qa.1" -P 'bg=colour22'     # dev: dark green
-tmux select-pane -t "$SESSION:qa.2" -P 'bg=colour17'     # refactor: dark blue
-tmux select-pane -t "$SESSION:qa.3" -P 'bg=colour233'    # orch: near-black
+# Check if the RGR composite background image exists
+COMPOSITE_IMG="$HOME/.config/orchestrator-template/images/rgr_composite.png"
+if [ -f "$COMPOSITE_IMG" ]; then
+    # Transparent pane backgrounds -- let iTerm2's background image show through
+    tmux select-pane -t "$SESSION:qa.0" -P 'bg=default'
+    tmux select-pane -t "$SESSION:qa.1" -P 'bg=default'
+    tmux select-pane -t "$SESSION:qa.2" -P 'bg=default'
+    tmux select-pane -t "$SESSION:qa.3" -P 'bg=default'
+    # Also set window/pane default styles to transparent
+    tmux set-option -t "$SESSION" window-style 'bg=default'
+    tmux set-option -t "$SESSION" window-active-style 'bg=default'
+    echo "  Transparent pane backgrounds (composite image will show through)"
+    USE_COMPOSITE=true
+else
+    # Fallback: solid color backgrounds (no composite image found)
+    tmux select-pane -t "$SESSION:qa.0" -P 'bg=colour52'     # qa: dark red
+    tmux select-pane -t "$SESSION:qa.1" -P 'bg=colour22'     # dev: dark green
+    tmux select-pane -t "$SESSION:qa.2" -P 'bg=colour17'     # refactor: dark blue
+    tmux select-pane -t "$SESSION:qa.3" -P 'bg=colour233'    # orch: near-black
+    echo "  Solid color pane backgrounds (run setup-iterm-profiles.sh for robot images)"
+    USE_COMPOSITE=false
+fi
 
 # Border colors
 tmux set-option -t "$SESSION" pane-border-style "fg=colour240"
@@ -342,6 +369,15 @@ echo "  $PROJECT_DIR/scripts/stop.sh $PROJECT - Graceful shutdown"
 echo "================================"
 echo ""
 
-# Select the orchestrator pane and attach
+# Select the orchestrator pane
 tmux select-pane -t "$SESSION:qa.3"
+
+# If composite image exists, switch iTerm2 to the RGR profile before attaching.
+# The escape sequence sets the profile for this iTerm2 session so the
+# composite robot background shows through the transparent tmux panes.
+if $USE_COMPOSITE; then
+    printf '\033]1337;SetProfile=RGR\007'
+    echo "  iTerm2 profile set to 'RGR' (composite background)"
+fi
+
 tmux attach -t "$SESSION"
