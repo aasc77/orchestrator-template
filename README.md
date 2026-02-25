@@ -89,7 +89,7 @@ After PM generates your PRD, run the wizard again and select mode 2 (New Project
 
 ## Quick Start
 
-> For a detailed walkthrough with configuration examples and troubleshooting, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
+> For a step-by-step walkthrough, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 **1. Clone and install** (setup will prompt to create a project):
 
@@ -335,3 +335,19 @@ While the orchestrator is running, type commands in the ORCH pane:
 | `help` | Show all commands |
 
 You can also type natural language -- the orchestrator's LLM will interpret it.
+
+## Troubleshooting
+
+**"Ollama is not running"**
+```bash
+ollama serve    # start in a separate terminal
+ollama pull qwen3:8b   # if model is missing
+```
+
+**"nested session" error from Claude Code** -- `start.sh` handles this automatically, but if launching manually: `unset CLAUDECODE && claude --mcp-config ...`
+
+**Task stuck after 5 attempts** -- type `skip` in the ORCH pane, or reset in `tasks.json` (`status: "pending"`, `attempts: 0`)
+
+**MCP tools not available** -- verify `claude-code-mcp-config.json` has the correct absolute path to `mcp-bridge/index.js`. Re-run `scripts/setup.sh` if needed.
+
+**Agent not responding** -- type `nudge dev` (or `qa`/`refactor`) in the ORCH pane. Check if Claude Code is still running in that pane.
