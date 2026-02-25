@@ -152,13 +152,15 @@ vi my-app/.worktrees/refactor/CLAUDE.md # Refactor agent instructions
 
 **Why git worktrees?** Each agent (QA, Dev, Refactor) works on its own branch in its own worktree directory. This lets all three agents work simultaneously on the same repo without conflicts. The orchestrator handles git merges between phases automatically.
 
-## Adding a New Project
+## Project Setup Wizard
+
+All project setup -- new repos, existing repos, and PM Pre-Flight -- goes through a single wizard:
 
 ```bash
 my-orchestrator/scripts/new-project.sh
 ```
 
-The wizard handles everything: locates your dev repo, creates git worktrees (`.worktrees/qa`, `.worktrees/dev`, `.worktrees/refactor`), and generates `config.yaml`, `tasks.json`, and agent `CLAUDE.md` files with correct pane values and smoke-test tasks.
+The wizard prompts you to choose a mode (PM Pre-Flight, New Project, or Existing Project), then handles everything: locates your repo, creates git worktrees, generates `config.yaml`, `tasks.json`, and agent `CLAUDE.md` files.
 
 Pass the folder name as an argument to skip the first prompt:
 
@@ -168,17 +170,42 @@ my-orchestrator/scripts/new-project.sh my-app
 
 After the wizard finishes, customize the generated files:
 1. Replace smoke-test tasks in `projects/<name>/tasks.json` with your real work
-2. Fill in the `<!-- TODO -->` placeholders in `CLAUDE.md` in each working directory
+2. Fill in the `<!-- TODO -->` placeholders in `CLAUDE.md` in each worktree directory
 3. Launch with `my-orchestrator/scripts/start.sh <name>`
 
 Multiple projects can run simultaneously (each gets its own tmux session and mailbox).
+
+### Existing repos with a CLAUDE.md
+
+The wizard is safe to run on repos that already have files -- it won't overwrite anything:
+
+| What it finds | What it does |
+|---|---|
+| Repo directory exists | Uses it as-is, creates worktrees |
+| `CLAUDE.md` exists, no MCP section | Appends only the MCP communication protocol to the end |
+| `CLAUDE.md` exists, already has MCP | Skips entirely (no changes) |
+| No `CLAUDE.md` | Creates the full template |
+
+Running the wizard again is safe -- it's idempotent.
+
+### Using without pre-defined tasks
+
+You don't need to populate `tasks.json`. Leave the task list empty and drive the workflow manually:
+
+1. Launch: `my-orchestrator/scripts/start.sh <name>`
+2. Click the **DEV** pane and tell the agent what to work on
+3. Dev implements and calls `send_to_qa` -- the orchestrator routes it to QA
+4. QA tests and calls `send_to_dev` -- the orchestrator routes results back
+5. On pass, orchestrator routes to Refactor for cleanup, then merges to main
+
+The orchestrator stays alive with an empty task list, polls the mailbox, routes messages between agents, and accepts interactive commands in the ORCH pane.
 
 <details>
 <summary>Manual setup (without wizard)</summary>
 
 ```bash
-git clone git@github.com:yourorg/new-project.git
-cd new-project
+git clone git@github.com:yourorg/my-app.git
+cd my-app
 git worktree add .worktrees/qa
 git worktree add .worktrees/dev
 git worktree add .worktrees/refactor
@@ -186,113 +213,32 @@ git worktree add .worktrees/refactor
 
 ```bash
 cp -r my-orchestrator/projects/example my-orchestrator/projects/<name>
+mkdir -p my-orchestrator/shared/<name>/mailbox/{to_dev,to_qa,to_refactor}
+mkdir -p my-orchestrator/shared/<name>/workspace
 ```
 
-Edit `my-orchestrator/projects/<name>/config.yaml` to point at your working directories:
+Edit `my-orchestrator/projects/<name>/config.yaml`:
 
 ```yaml
-project: my_new_project
-repo_dir: /path/to/new-project
+project: <name>
+repo_dir: /path/to/my-app
 tmux:
-  session_name: mynewproject
+  session_name: <name>
 agents:
   qa:
-    working_dir: /path/to/new-project/.worktrees/qa
+    working_dir: /path/to/my-app/.worktrees/qa
     pane: qa.0
   dev:
-    working_dir: /path/to/new-project/.worktrees/dev
+    working_dir: /path/to/my-app/.worktrees/dev
     pane: qa.1
   refactor:
-    working_dir: /path/to/new-project/.worktrees/refactor
+    working_dir: /path/to/my-app/.worktrees/refactor
     pane: qa.2
 ```
 
 Then add tasks to `projects/<name>/tasks.json` and launch with `my-orchestrator/scripts/start.sh <name>`.
 
 </details>
-
-## Adding an Existing Project
-
-Already have a repo with its own `CLAUDE.md`? The wizard is safe to run -- it won't overwrite your files:
-
-```bash
-my-orchestrator/scripts/new-project.sh my-existing-app
-```
-
-The wizard detects existing files and handles them:
-
-| What it finds | What it does |
-|---|---|
-| Dev directory exists | Uses it as-is, creates worktrees |
-| `CLAUDE.md` exists, no MCP section | Appends only the MCP communication protocol to the end |
-| `CLAUDE.md` exists, already has MCP | Skips entirely (no changes) |
-| No `CLAUDE.md` | Creates the full template |
-
-The confirmation screen shows exactly what will happen before you proceed:
-
-```
-Will create:
-  projects/my-existing-app/config.yaml
-  projects/my-existing-app/tasks.json
-  shared/my-existing-app/mailbox/{to_dev,to_qa,to_refactor}/
-  shared/my-existing-app/workspace/
-  <your-repo>/.worktrees/qa/CLAUDE.md
-  <your-repo>/.worktrees/dev/CLAUDE.md
-  <your-repo>/.worktrees/refactor/CLAUDE.md
-  <your-repo>/CLAUDE.md      (exists -- will append MCP section)
-```
-
-Running the wizard again is safe -- it's idempotent.
-
-### Using without pre-defined tasks
-
-You don't need to populate `tasks.json` to use the orchestrator. The task system is optional. You can leave the task list empty and drive the workflow manually:
-
-1. Launch: `my-orchestrator/scripts/start.sh my-existing-app`
-2. Click the **DEV** pane and tell the agent what to work on (e.g., "grab issue #42 from GitHub and fix it")
-3. Dev implements and calls `send_to_qa` -- the orchestrator routes it to QA
-4. QA tests and calls `send_to_dev` -- the orchestrator routes results back
-5. On pass, orchestrator routes to Refactor for cleanup, then merges to main
-
-The orchestrator stays alive with an empty task list, polls the mailbox, routes messages between agents, and accepts interactive commands in the ORCH pane.
-
-### Custom project key
-
-The wizard derives the project key from the folder name, but for existing projects you may want a shorter key. Create the project manually:
-
-```bash
-mkdir -p my-orchestrator/projects/myapp
-mkdir -p my-orchestrator/shared/myapp/mailbox/{to_dev,to_qa,to_refactor}
-mkdir -p my-orchestrator/shared/myapp/workspace
-```
-
-```yaml
-# my-orchestrator/projects/myapp/config.yaml
-project: myapp
-repo_dir: /full/path/to/your-existing-repo
-tmux:
-  session_name: myapp
-agents:
-  qa:
-    working_dir: /full/path/to/your-existing-repo/.worktrees/qa
-    pane: qa.0
-  dev:
-    working_dir: /full/path/to/your-existing-repo/.worktrees/dev
-    pane: qa.1
-  refactor:
-    working_dir: /full/path/to/your-existing-repo/.worktrees/refactor
-    pane: qa.2
-```
-
-```json
-// my-orchestrator/projects/myapp/tasks.json
-{
-  "project": "myapp",
-  "tasks": []
-}
-```
-
-Then append the MCP protocol to your existing CLAUDE.md (see `docs/QUICKSTART.md` for the snippet) and launch with `start.sh myapp`.
 
 ## Configuration
 
@@ -369,8 +315,8 @@ orchestrator-template/
 │       └── workspace/
 └── docs/
     ├── QUICKSTART.md
-    ├── MCP Bridge Setup Guide.md
-    └── troubleshooting.md
+    ├── CONTEXT.md                  # Architecture reference
+    └── MCP Bridge Setup Guide.md
 ```
 
 ## Interactive Commands
