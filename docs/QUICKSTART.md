@@ -34,10 +34,20 @@ The orchestrator handles git merges between phases automatically:
 
 If a merge conflicts, the orchestrator sets state to BLOCKED and flags a human.
 
-### Two modes
+### Three modes
 
-- **New project (`mode: new`)**: Classic TDD -- QA writes failing tests, Dev makes them pass
-- **Existing project (`mode: existing`)**: Characterization -- QA writes tests that PASS against existing code, Dev verifies coverage, Refactor cleans up legacy code
+The wizard (`new-project.sh`) presents three options when you create a project:
+
+| Mode | When to use | What happens |
+|------|-------------|--------------|
+| **1. PM Pre-Flight** | You have a vague idea but no clear requirements | Claude generates a PRD from your idea, then exits. Run the wizard again with mode 2 or 3 to start building. |
+| **2. New Project** | Greenfield code -- nothing exists yet | Classic TDD: QA writes **failing** tests, Dev writes minimum code to pass, Refactor cleans up |
+| **3. Existing Project** | You have a working codebase that needs tests and cleanup | Characterization: QA writes tests that **PASS** against existing code, Dev verifies coverage (no source changes), Refactor modernizes |
+
+**How to choose between New and Existing:**
+
+- **Use New** when starting from scratch or adding a brand-new feature. QA writes tests first, and they fail until Dev implements the code.
+- **Use Existing** when you already have working code. QA writes tests that confirm current behavior. Dev does NOT modify source files -- only verifies and extends test coverage. Refactor then modernizes the code with a safety net of passing tests.
 
 ## 1. Install Prerequisites
 
@@ -70,7 +80,31 @@ Setup will:
 - Run a quick self-test to verify the bridge works
 - **Prompt to create your first project** (runs the wizard automatically)
 
-## 3. Create Your Project
+## 3. PM Pre-Flight (Optional)
+
+If you have a vague idea but no clear requirements, start with PM Pre-Flight before creating your project:
+
+```bash
+my-orchestrator/scripts/new-project.sh
+# Select option 1: PM Pre-Flight
+```
+
+The wizard will:
+1. Ask for a one-paragraph description of your idea
+2. Launch Claude Code as a PM agent
+3. Generate a structured PRD (Product Requirements Document) with:
+   - Happy paths, edge cases, and error states
+   - Strict language (MUST, MUST NOT, WILL -- no ambiguity)
+   - Specific fields, behaviors, and constraints
+4. Show a preview of the generated PRD
+5. Optionally save it to a project's QA mailbox (`shared/<project>/mailbox/to_qa/prd.md`)
+6. **Exit** -- PM mode does not start the RGR pipeline
+
+After reviewing the PRD, run the wizard again and select mode 2 (New Project) or 3 (Existing Project). The PRD in the QA mailbox gives the QA agent clear requirements to write tests against.
+
+The PM agent prompt lives at `docs/pm_agent.md` -- customize it to match your team's PRD format.
+
+## 4. Create Your Project
 
 Setup prompts you to create a project at the end. If you skipped it, run the wizard manually:
 
@@ -195,7 +229,7 @@ The full snippets are in `scripts/new-project.sh` if you need to add them manual
 
 ---
 
-## 4. Customize Your Project
+## 5. Customize Your Project
 
 The wizard generates working defaults, but you'll want to customize these files for your actual project.
 
@@ -266,7 +300,7 @@ The wizard creates a `CLAUDE.md` in each working directory. Claude Code picks th
 
 The more context you provide, the better the agents perform.
 
-## 5. iTerm2 Background Images (Optional)
+## 6. iTerm2 Background Images (Optional)
 
 Set up robot background images for each pane in the 2x2 grid. This creates a composite image with the QA (red), Dev (green), Refactor (blue), and Orchestrator robots, then uses transparent tmux panes so the images show through.
 
@@ -291,7 +325,7 @@ bash scripts/setup-iterm-profiles.sh
 
 Source images live in `images/` (Red_robot.png, Green_rotbot.png, Blue_robot.png, orchestrator.png).
 
-## 6. Launch
+## 7. Launch
 
 ```bash
 my-orchestrator/scripts/start.sh myproject
@@ -330,7 +364,7 @@ You'll see pre-flight checks, then a tmux session with four panes:
 8. Orchestrator merges `blue/<task>` into the default branch (main)
 9. Repeat for the next task
 
-## 7. Monitor and Interact
+## 8. Monitor and Interact
 
 Click the **ORCH** pane (bottom) to interact with the orchestrator.
 
@@ -374,7 +408,7 @@ To reattach after detaching:
 tmux attach -t myproject
 ```
 
-## 8. Stop
+## 9. Stop
 
 ```bash
 my-orchestrator/scripts/stop.sh myproject
