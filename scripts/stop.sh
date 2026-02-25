@@ -57,7 +57,10 @@ tmux kill-session -t "$SESSION" 2>/dev/null && echo "  Session killed" || echo "
 # Step 5: Clean up any orphaned processes
 pkill -fx "python3 orchestrator.py $PROJECT" 2>/dev/null && echo "  Killed orphaned orchestrator" || true
 
-# Step 6: Optional branch cleanup
+# Step 6: Reset iTerm2 profile back to Default
+printf '\033]1337;SetProfile=Default\007' 2>/dev/null || true
+
+# Step 7: Optional branch cleanup
 if [[ -n "$REPO_DIR" && -d "$REPO_DIR/.git" ]]; then
     echo ""
     read -r -p "Clean up task branches? [y/N] " cleanup_response
