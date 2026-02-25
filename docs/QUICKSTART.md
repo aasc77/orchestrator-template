@@ -222,7 +222,32 @@ The wizard creates a `CLAUDE.md` in each working directory. Claude Code picks th
 
 The more context you provide, the better the agents perform.
 
-## 5. Launch
+## 5. iTerm2 Background Images (Optional)
+
+Set up robot background images for each pane in the 2x2 grid. This creates a composite image with the QA (red), Dev (green), Refactor (blue), and Orchestrator robots, then uses transparent tmux panes so the images show through.
+
+```bash
+# One-time setup (creates iTerm2 "RGR" profile)
+bash scripts/setup-iterm-profiles.sh
+
+# Restart iTerm2 to pick up the new profile
+# Cmd+Q, then reopen iTerm2
+```
+
+Verify the profile exists: **iTerm2 > Settings > Profiles > RGR**
+
+When you run `start.sh`, it automatically detects the composite image, sets transparent pane backgrounds, and switches iTerm2 to the RGR profile. If the composite isn't found, it falls back to solid color backgrounds.
+
+To regenerate the composite (e.g. after replacing images in `images/`):
+
+```bash
+bash scripts/setup-iterm-profiles.sh
+# Restart iTerm2
+```
+
+Source images live in `images/` (Red_robot.png, Green_rotbot.png, Blue_robot.png, orchestrator.png).
+
+## 6. Launch
 
 ```bash
 my-orchestrator/scripts/start.sh myproject
@@ -258,7 +283,7 @@ You'll see pre-flight checks, then a tmux session with three panes:
 5. QA gets nudged, tests the work, calls `send_to_dev` with results
 6. The orchestrator decides: advance to next task (pass) or send back (fail)
 
-## 6. Monitor and Interact
+## 7. Monitor and Interact
 
 Click the **ORCH** pane (bottom) to interact with the orchestrator.
 
@@ -304,7 +329,7 @@ To reattach after detaching:
 tmux attach -t myproject
 ```
 
-## 7. Stop
+## 8. Stop
 
 ```bash
 my-orchestrator/scripts/stop.sh myproject
