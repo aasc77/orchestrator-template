@@ -29,7 +29,7 @@ The wizard (`new-project.sh`) presents three options:
 Each project uses a single repo with three worktrees:
 
 ```
-~/Repositories/my-app/              # Main repo (default branch, merge target)
+<your-repo>/                        # Main repo (default branch, merge target)
 ├── .worktrees/
 │   ├── qa/                         # QA worktree (red/<task> branches)
 │   ├── dev/                        # Dev worktree (green/<task> branches)
@@ -81,20 +81,20 @@ The orchestrator polls the mailbox independently via `mailbox_watcher.py`, route
 # projects/<name>/config.yaml
 project: my_project
 mode: new                    # "new" or "existing"
-repo_dir: ~/Repositories/my-app
+repo_dir: /path/to/your-repo
 
 tmux:
   session_name: myproject
 
 agents:
   qa:
-    working_dir: ~/Repositories/my-app/.worktrees/qa
+    working_dir: /path/to/your-repo/.worktrees/qa
     pane: qa.0
   dev:
-    working_dir: ~/Repositories/my-app/.worktrees/dev
+    working_dir: /path/to/your-repo/.worktrees/dev
     pane: qa.1
   refactor:
-    working_dir: ~/Repositories/my-app/.worktrees/refactor
+    working_dir: /path/to/your-repo/.worktrees/refactor
     pane: qa.2
 ```
 
