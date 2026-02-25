@@ -1,9 +1,9 @@
-# Multi-Agent Dev/QA Orchestrator
+# RGR Orchestrator (Red-Green-Refactor)
 
-Automated Dev/QA workflow: Dev codes, QA tests, local AI orchestrator routes decisions.
+Automated Red-Green-Refactor workflow with three Claude Code agents: QA writes tests, Dev writes code, Refactor cleans up. A local AI orchestrator routes decisions and manages git merges.
 Supports multiple projects from a single installation.
 
-![Demo: Dev, QA, and Orchestrator working together](docs/images/demo.gif)
+![Demo: QA, Dev, Refactor, and Orchestrator working together](docs/images/demo.gif)
 
 ## Architecture
 
@@ -11,35 +11,44 @@ Supports multiple projects from a single installation.
 +--------------------------------------+
 |     Orchestrator (Qwen3 8B local)    |
 |     Polls mailbox, makes decisions,  |
-|     writes instructions back         |
+|     manages git merges between phases|
 +-----------+--------------------------+
             | reads/writes
       +-----+-----+
       |  Mailbox  |  (shared/<project>/mailbox/)
       +-----+-----+
-            | MCP tools: check_messages, send_to_qa, send_to_dev
-      +-----+-----+
-      |           |
-+-----v----+ +---v------+
-| Dev Agent | | QA Agent |
-| Claude    | | Claude   |
-| Code      | | Code     |
-+----------+ +----------+
+            | MCP tools: check_messages, send_to_dev,
+            |   send_to_refactor, send_refactor_complete
+      +-----+-----+-----+
+      |           |           |
++-----v----+ +---v------+ +--v--------+
+| QA Agent | | Dev Agent | | Refactor  |
+| (RED)    | | (GREEN)   | | (BLUE)    |
+| Claude   | | Claude    | | Claude    |
+| Code     | | Code      | | Code      |
++----------+ +----------+ +-----------+
 ```
 
-## How It Works
+## How It Works (RGR Cycle)
 
-1. Orchestrator writes first task to Dev's mailbox
-2. Dev agent calls `check_messages` -> gets the task -> codes it
-3. Dev calls `send_to_qa` with summary + test instructions
-4. Orchestrator sees the message, writes test instruction to QA's mailbox
-5. QA agent calls `check_messages` -> gets test request -> tests it
-6. QA calls `send_to_dev` with pass/fail + bugs
-7. Orchestrator sees results, asks local LLM to decide:
-   - **PASS** -> writes next task to Dev's mailbox
-   - **FAIL** -> writes bug details to Dev's mailbox
-   - **STUCK** (5+ attempts) -> flags for human review
-8. Loop until all tasks complete
+Each task goes through three phases:
+
+1. Orchestrator creates `red/<task>`, `green/<task>`, `blue/<task>` branches in each worktree
+2. Orchestrator writes first task to QA's mailbox
+3. **RED**: QA writes failing tests on `red/<task>`, commits, calls `send_to_dev`
+4. Orchestrator merges `red/<task>` into Dev's worktree
+5. **GREEN**: Dev writes minimum code to pass tests on `green/<task>`, commits, calls `send_to_refactor`
+6. Orchestrator merges `green/<task>` into Refactor's worktree
+7. **BLUE**: Refactor cleans up code on `blue/<task>`, runs `/review`, commits, calls `send_refactor_complete`
+8. Orchestrator merges `blue/<task>` into the default branch (main)
+9. Repeat for the next task
+
+If a merge conflicts, the orchestrator sets state to BLOCKED and flags a human. Tasks that fail 5+ attempts are marked `stuck` for human review.
+
+### Two Modes
+
+- **New project (`mode: new`)**: Classic TDD -- QA writes failing tests, Dev makes them pass
+- **Existing project (`mode: existing`)**: Characterization -- QA writes tests that PASS against existing code, Dev verifies coverage, Refactor cleans up legacy code
 
 ## Prerequisites
 
@@ -65,8 +74,10 @@ my-orchestrator/scripts/setup.sh
 
 ```bash
 vi my-orchestrator/projects/<name>/tasks.json
-vi ~/Repositories/<name>/CLAUDE.md
-vi ~/Repositories/<name>_qa/CLAUDE.md
+vi ~/Repositories/<name>/CLAUDE.md                    # Main repo instructions
+vi ~/Repositories/<name>/.worktrees/qa/CLAUDE.md      # QA agent
+vi ~/Repositories/<name>/.worktrees/dev/CLAUDE.md     # Dev agent
+vi ~/Repositories/<name>/.worktrees/refactor/CLAUDE.md # Refactor agent
 ```
 
 **3. Launch:**
@@ -91,10 +102,13 @@ my-orchestrator/scripts/stop.sh <name>
 <summary>Manual setup (without wizard)</summary>
 
 ```bash
-# 1. Set up working directories for your agents
+# 1. Set up your repo with git worktrees
 cd ~/Repositories
-git clone git@github.com:yourorg/my-app.git            # Dev's copy
-git clone git@github.com:yourorg/my-app.git my-app_qa   # QA's copy
+git clone git@github.com:yourorg/my-app.git
+cd my-app
+git worktree add .worktrees/qa
+git worktree add .worktrees/dev
+git worktree add .worktrees/refactor
 
 # 2. Create your project from the example
 cp -r my-orchestrator/projects/example my-orchestrator/projects/myproject
@@ -102,13 +116,14 @@ cp -r my-orchestrator/projects/example my-orchestrator/projects/myproject
 # 3. Configure
 vi my-orchestrator/projects/myproject/config.yaml   # Set working dirs, session name
 vi my-orchestrator/projects/myproject/tasks.json     # Define your tasks
-vi ~/Repositories/my-app/CLAUDE.md                   # Add project context for Dev
-vi ~/Repositories/my-app_qa/CLAUDE.md                # Add test environment for QA
+vi ~/Repositories/my-app/.worktrees/qa/CLAUDE.md     # QA agent instructions
+vi ~/Repositories/my-app/.worktrees/dev/CLAUDE.md    # Dev agent instructions
+vi ~/Repositories/my-app/.worktrees/refactor/CLAUDE.md # Refactor agent instructions
 ```
 
 </details>
 
-**Why two working directories?** Dev and QA run as separate Claude Code sessions. Separate directories prevent them from interfering with each other. They communicate through the MCP mailbox, not the filesystem. You can use one directory for both if you prefer, but simultaneous edits may conflict.
+**Why git worktrees?** Each agent (QA, Dev, Refactor) works on its own branch in its own worktree directory. This lets all three agents work simultaneously on the same repo without conflicts. The orchestrator handles git merges between phases automatically.
 
 ## Adding a New Project
 
@@ -116,7 +131,7 @@ vi ~/Repositories/my-app_qa/CLAUDE.md                # Add test environment for 
 my-orchestrator/scripts/new-project.sh
 ```
 
-The wizard handles everything: locates your dev repo, creates the QA directory (clone or empty), and generates `config.yaml`, `tasks.json`, and agent `CLAUDE.md` files with correct pane values and smoke-test tasks.
+The wizard handles everything: locates your dev repo, creates git worktrees (`.worktrees/qa`, `.worktrees/dev`, `.worktrees/refactor`), and generates `config.yaml`, `tasks.json`, and agent `CLAUDE.md` files with correct pane values and smoke-test tasks.
 
 Pass the folder name as an argument to skip the first prompt:
 
@@ -136,8 +151,11 @@ Multiple projects can run simultaneously (each gets its own tmux session and mai
 
 ```bash
 cd ~/Repositories
-git clone git@github.com:yourorg/new-project.git              # Dev's copy
-git clone git@github.com:yourorg/new-project.git new-project_qa  # QA's copy
+git clone git@github.com:yourorg/new-project.git
+cd new-project
+git worktree add .worktrees/qa
+git worktree add .worktrees/dev
+git worktree add .worktrees/refactor
 ```
 
 ```bash
@@ -148,15 +166,19 @@ Edit `my-orchestrator/projects/<name>/config.yaml` to point at your working dire
 
 ```yaml
 project: my_new_project
+repo_dir: ~/Repositories/new-project
 tmux:
   session_name: mynewproject
 agents:
-  dev:
-    working_dir: ~/Repositories/new-project       # Dev's repo clone
-    pane: orch.0
   qa:
-    working_dir: ~/Repositories/new-project_qa    # QA's repo clone
-    pane: orch.1
+    working_dir: ~/Repositories/new-project/.worktrees/qa
+    pane: qa.0
+  dev:
+    working_dir: ~/Repositories/new-project/.worktrees/dev
+    pane: qa.1
+  refactor:
+    working_dir: ~/Repositories/new-project/.worktrees/refactor
+    pane: qa.2
 ```
 
 Then add tasks to `projects/<name>/tasks.json` and launch with `my-orchestrator/scripts/start.sh <name>`.
@@ -175,7 +197,7 @@ The wizard detects existing files and handles them:
 
 | What it finds | What it does |
 |---|---|
-| Dev directory exists | Uses it as-is (no changes) |
+| Dev directory exists | Uses it as-is, creates worktrees |
 | `CLAUDE.md` exists, no MCP section | Appends only the MCP communication protocol to the end |
 | `CLAUDE.md` exists, already has MCP | Skips entirely (no changes) |
 | No `CLAUDE.md` | Creates the full template |
@@ -186,10 +208,12 @@ The confirmation screen shows exactly what will happen before you proceed:
 Will create:
   projects/my-existing-app/config.yaml
   projects/my-existing-app/tasks.json
-  shared/my-existing-app/mailbox/{to_dev,to_qa}/
+  shared/my-existing-app/mailbox/{to_dev,to_qa,to_refactor}/
   shared/my-existing-app/workspace/
+  ~/Repositories/my-existing-app/.worktrees/qa/CLAUDE.md
+  ~/Repositories/my-existing-app/.worktrees/dev/CLAUDE.md
+  ~/Repositories/my-existing-app/.worktrees/refactor/CLAUDE.md
   ~/Repositories/my-existing-app/CLAUDE.md      (exists -- will append MCP section)
-  ~/Repositories/my-existing-app_qa/CLAUDE.md   (new)
 ```
 
 Running the wizard again is safe -- it's idempotent.
@@ -200,8 +224,9 @@ You don't need to populate `tasks.json` to use the orchestrator. The task system
 
 1. Launch: `my-orchestrator/scripts/start.sh my-existing-app`
 2. Click the **DEV** pane and tell the agent what to work on (e.g., "grab issue #42 from GitHub and fix it")
-3. Dev implements and calls `send_to_qa` -- the orchestrator routes it to QA automatically
+3. Dev implements and calls `send_to_qa` -- the orchestrator routes it to QA
 4. QA tests and calls `send_to_dev` -- the orchestrator routes results back
+5. On pass, orchestrator routes to Refactor for cleanup, then merges to main
 
 The orchestrator stays alive with an empty task list, polls the mailbox, routes messages between agents, and accepts interactive commands in the ORCH pane.
 
@@ -211,22 +236,26 @@ The wizard derives the project key from the folder name, but for existing projec
 
 ```bash
 mkdir -p my-orchestrator/projects/myapp
-mkdir -p my-orchestrator/shared/myapp/mailbox/{to_dev,to_qa}
+mkdir -p my-orchestrator/shared/myapp/mailbox/{to_dev,to_qa,to_refactor}
 mkdir -p my-orchestrator/shared/myapp/workspace
 ```
 
 ```yaml
 # my-orchestrator/projects/myapp/config.yaml
 project: myapp
+repo_dir: /full/path/to/your-existing-repo
 tmux:
   session_name: myapp
 agents:
-  dev:
-    working_dir: /full/path/to/your-existing-repo
-    pane: orch.0
   qa:
-    working_dir: /full/path/to/your-existing-repo_qa
-    pane: orch.1
+    working_dir: /full/path/to/your-existing-repo/.worktrees/qa
+    pane: qa.0
+  dev:
+    working_dir: /full/path/to/your-existing-repo/.worktrees/dev
+    pane: qa.1
+  refactor:
+    working_dir: /full/path/to/your-existing-repo/.worktrees/refactor
+    pane: qa.2
 ```
 
 ```json
@@ -244,10 +273,12 @@ Then append the MCP protocol to your existing CLAUDE.md (see `docs/QUICKSTART.md
 ### Project Config (`projects/<name>/config.yaml`)
 Per-project settings that override shared defaults:
 - `project`: Project identifier
+- `repo_dir`: Path to the main git repository
 - `tmux.session_name`: tmux session name (must be unique per project)
-- `agents.dev.working_dir`: Dev agent's working directory
-- `agents.qa.working_dir`: QA agent's working directory
-- `agents.*.pane`: tmux pane target (orch.0 = dev, orch.1 = qa)
+- `agents.qa.working_dir`: QA agent's worktree directory
+- `agents.dev.working_dir`: Dev agent's worktree directory
+- `agents.refactor.working_dir`: Refactor agent's worktree directory
+- `agents.*.pane`: tmux pane target (qa.0 = QA, qa.1 = Dev, qa.2 = Refactor)
 
 ### Shared Config (`orchestrator/config.yaml`)
 Defaults for all projects:
@@ -266,8 +297,8 @@ Define tasks with:
 - `acceptance_criteria`: Measurable outcomes QA will verify
 - `status`: `pending`, `in_progress`, `completed`, or `stuck`
 
-### Agent Instructions (`CLAUDE.md` in working directories)
-The wizard creates a `CLAUDE.md` in each agent's working directory (e.g., `~/Repositories/my-app/CLAUDE.md` for Dev, `~/Repositories/my-app_qa/CLAUDE.md` for QA). Claude Code picks these up automatically -- both when launched by the orchestrator and when you run `claude` standalone. Customize with:
+### Agent Instructions (`CLAUDE.md` in worktree directories)
+The wizard creates a `CLAUDE.md` in each agent's worktree directory (e.g., `.worktrees/dev/CLAUDE.md` for Dev, `.worktrees/qa/CLAUDE.md` for QA, `.worktrees/refactor/CLAUDE.md` for Refactor). Claude Code picks these up automatically -- both when launched by the orchestrator and when you run `claude` standalone. Customize with:
 - Tech stack, architecture, key URLs
 - Test credentials and environment details
 - Known bugs and deployment instructions
@@ -278,12 +309,17 @@ The wizard creates a `CLAUDE.md` in each agent's working directory (e.g., `~/Rep
 orchestrator-template/
 ├── README.md
 ├── claude-code-mcp-config.json      # MCP config for Claude Code agents
+├── images/                          # Robot background images (source PNGs)
+│   ├── Red_robot.png                # QA agent (red)
+│   ├── Green_rotbot.png             # Dev agent (green)
+│   ├── Blue_robot.png               # Refactor agent (blue)
+│   └── orchestrator.png             # Orchestrator
 ├── projects/
 │   └── example/                     # Template project (copy to create new)
 │       ├── config.yaml              # Project config (session, working dirs)
 │       └── tasks.json               # Task queue
 ├── orchestrator/
-│   ├── orchestrator.py              # Main loop (polls mailbox, asks LLM)
+│   ├── orchestrator.py              # Main loop (polls mailbox, asks LLM, merges)
 │   ├── llm_client.py                # Ollama API client
 │   ├── mailbox_watcher.py           # File watcher for mailbox
 │   ├── config.yaml                  # Shared defaults
@@ -295,18 +331,19 @@ orchestrator-template/
 ├── scripts/
 │   ├── setup.sh                     # One-time install
 │   ├── new-project.sh               # Interactive project setup wizard
+│   ├── setup-iterm-profiles.sh      # iTerm2 background image setup
 │   ├── start.sh <project>           # Launch a project session
 │   └── stop.sh <project>            # Stop a project session
 ├── shared/                          # Created at runtime per project
 │   └── <project>/
 │       ├── mailbox/
 │       │   ├── to_dev/
-│       │   └── to_qa/
+│       │   ├── to_qa/
+│       │   └── to_refactor/
 │       └── workspace/
 └── docs/
     ├── QUICKSTART.md
-    ├── images/demo.png
-    ├── mcp-setup.md
+    ├── MCP Bridge Setup Guide.md
     └── troubleshooting.md
 ```
 
@@ -319,8 +356,8 @@ While the orchestrator is running, type commands in the ORCH pane:
 | `status` | Current task and progress |
 | `tasks` | List all tasks with status |
 | `skip` | Skip current stuck task |
-| `nudge dev\|qa` | Manually nudge an agent |
-| `msg dev\|qa TEXT` | Send text to an agent's pane |
+| `nudge dev\|qa\|refactor` | Manually nudge an agent |
+| `msg dev\|qa\|refactor TEXT` | Send text to an agent's pane |
 | `pause` / `resume` | Pause/resume mailbox polling |
 | `log` | Show last 10 log entries |
 | `help` | Show all commands |

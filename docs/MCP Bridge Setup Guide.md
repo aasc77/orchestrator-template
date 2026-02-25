@@ -2,12 +2,17 @@
 
 ## What is the MCP Bridge?
 
-The MCP bridge is a small Node.js server that gives both Claude Code instances
-shared tools for communication: `send_to_qa`, `send_to_dev`, `check_messages`,
-`list_workspace`, and `read_workspace_file`.
+The MCP bridge is a small Node.js server that gives all three Claude Code agents
+shared tools for communication:
+
+- `check_messages` -- Check mailbox for new messages (role: "qa", "dev", or "refactor")
+- `send_to_dev` -- QA sends test results to Dev
+- `send_to_refactor` -- Dev sends code to Refactor
+- `send_refactor_complete` -- Refactor reports results back to orchestrator
+- `list_workspace` / `read_workspace_file` -- Shared workspace access
 
 It uses a file-based mailbox system — messages are JSON files written to
-`shared/<project>/mailbox/to_dev/` and `shared/<project>/mailbox/to_qa/`.
+`shared/<project>/mailbox/to_dev/`, `shared/<project>/mailbox/to_qa/`, and `shared/<project>/mailbox/to_refactor/`.
 
 ## Adding MCP to Claude Code
 
@@ -38,7 +43,7 @@ claude --mcp-config /path/to/my-orchestrator/claude-code-mcp-config.json
 
 1. Start Claude Code with the MCP config
 2. Ask Claude: "What MCP tools do you have?"
-3. You should see: send_to_qa, send_to_dev, check_messages, list_workspace, read_workspace_file
+3. You should see: check_messages, send_to_dev, send_to_refactor, send_refactor_complete, list_workspace, read_workspace_file
 
 ## Troubleshooting
 

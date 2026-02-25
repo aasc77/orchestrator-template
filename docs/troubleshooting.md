@@ -21,16 +21,17 @@ ollama pull qwen3:8b
 
 2. Verify MCP is registered with Claude Code:
    - Ask the agent: "What MCP tools do you have?"
-   - Should see: send_to_qa, send_to_dev, check_messages, list_workspace, read_workspace_file
+   - Should see: send_to_qa, send_to_dev, send_to_refactor, send_refactor_complete, check_messages, list_workspace, read_workspace_file
 
 3. Check for messages manually:
    ```bash
-   ls shared/<project>/mailbox/to_dev/    # Messages waiting for Dev
-   ls shared/<project>/mailbox/to_qa/     # Messages waiting for QA
+   ls shared/<project>/mailbox/to_dev/       # Messages waiting for Dev
+   ls shared/<project>/mailbox/to_qa/        # Messages waiting for QA
+   ls shared/<project>/mailbox/to_refactor/  # Messages waiting for Refactor
    cat shared/<project>/mailbox/to_dev/*.json
    ```
 
-4. Tell the agent: "Use check_messages with role dev" (or qa)
+4. Tell the agent: "Use check_messages with role dev" (or qa, or refactor)
 
 ## Orchestrator ignores its own messages
 
@@ -74,3 +75,63 @@ Long sessions exhaust the context window. Solutions:
 - Start a fresh Claude Code session
 - The CLAUDE.md re-orients the agent on its role
 - Message history is in the mailbox files, so context carries over
+
+## Git worktree issues
+
+**"fatal: '<path>' is already checked out"**
+A worktree is already using that branch. Each worktree must be on a different branch:
+```bash
+cd ~/Repositories/my-app
+git worktree list    # See what's checked out where
+```
+
+**Worktree in dirty state after failed merge**
+The orchestrator stashes/unstashes when merging. If a merge fails mid-way:
+```bash
+cd ~/Repositories/my-app/.worktrees/dev
+git stash list       # Check for orphaned stashes
+git status           # Check for merge conflicts
+git merge --abort    # If mid-merge
+```
+
+**Worktree not found**
+The wizard creates worktrees at `.worktrees/qa`, `.worktrees/dev`, `.worktrees/refactor`. If they're missing:
+```bash
+cd ~/Repositories/my-app
+git worktree add .worktrees/qa
+git worktree add .worktrees/dev
+git worktree add .worktrees/refactor
+```
+
+## Characterization mode (existing projects)
+
+**QA tests are failing instead of passing**
+In `mode: existing`, QA should write tests that PASS against the existing code. Check:
+- `config.yaml` has `mode: existing`
+- The QA `CLAUDE.md` instructs writing characterization tests (tests that capture current behavior)
+
+**Dev modifying source code in existing mode**
+In characterization mode, Dev should NOT modify source files -- only verify test coverage and add test cases. Check the Dev `CLAUDE.md` for correct instructions.
+
+## Merge conflicts between phases
+
+If the orchestrator reports BLOCKED:
+1. Check the ORCH pane for which merge failed (e.g., "merge red/task-1 into dev failed")
+2. Go to the affected worktree and resolve manually:
+   ```bash
+   cd ~/Repositories/my-app/.worktrees/dev
+   git status    # See conflicting files
+   # Resolve conflicts, then:
+   git add .
+   git commit
+   ```
+3. Reset the task in `tasks.json` (`status: "pending"`, `attempts: 0`)
+
+## Agent permission prompts slowing things down
+
+Agents frequently block on MCP tool permissions. To run fully autonomously:
+```bash
+my-orchestrator/scripts/start.sh <project> --yolo
+```
+
+This passes `--dangerouslySkipPermissions` to all Claude Code agents.
