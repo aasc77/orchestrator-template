@@ -1,54 +1,115 @@
-# CONTEXT
-We are upgrading this local AI agent orchestrator repository. We are moving to a strict "Red-Green-Refactor" (RGR) pipeline. 
+# Architecture Context
 
-To manage different workflows, we need to build a dynamic architecture with a CLI Setup Wizard. The system has three modes:
-1. **PM Pre-Flight:** Generate requirements from a vague idea.
-2. **New Project Mode:** Standard RGR loop for new code.
-3. **Existing Project Mode:** Backfill tests and refactor legacy code.
+High-level overview of how the RGR orchestrator is built. Use this as a reference when contributing or debugging.
 
-# TASKS TO EXECUTE
-Please analyze the current Python orchestrator script, the `tmux` launch script, and the two prompt files (`NEW PROJECT PROMPTS.md` and `EXISTING PROJECT PROMPTS.md`). Implement the following architectural changes:
+## System Components
 
-## 1. Create the Setup Wizard (`setup.py`)
-Create a new interactive Python CLI script that acts as the entry point for the user. It should present a menu with 3 options:
-- **Option 1: PM Planning (Pre-Flight)**
-  - Prompts the user for a vague idea.
-  - Calls `plan.py` (which you will build in step 2).
-- **Option 2: Run New Project RGR Loop**
-  - Reads `NEW PROJECT PROMPTS.md`.
-  - Extracts the respective text for QA, Dev, and Refactor.
-  - Writes/Overwrites the `CLAUDE.md` file in `mailboxes/qa/`, `mailboxes/dev/`, and `mailboxes/refactor/` with the exact text under their respective `FILE_TARGET` headers.
-  - Launches the `tmux` 4-pane grid.
-- **Option 3: Run Existing Project Backfill Loop**
-  - Reads `EXISTING PROJECT PROMPTS.md`.
-  - Extracts the respective text for QA, Dev, and Refactor.
-  - Writes/Overwrites the `CLAUDE.md` file in `mailboxes/qa/`, `mailboxes/dev/`, and `mailboxes/refactor/`.
-  - Launches the `tmux` 4-pane grid.
+```
+scripts/new-project.sh     Interactive wizard (mode selection, worktree setup, config generation)
+scripts/start.sh           Launches tmux 2x2 grid + orchestrator + 3 Claude Code agents
+scripts/stop.sh            Sends /exit to agents, kills tmux session, cleans up branches
+orchestrator/orchestrator.py   Main event loop (polls mailbox, asks LLM, manages git merges)
+orchestrator/llm_client.py     Ollama API client (Qwen3 8B default)
+orchestrator/mailbox_watcher.py  File watcher for JSON messages in shared/<project>/mailbox/
+mcp-bridge/index.js        MCP server exposing mailbox tools to Claude Code agents
+```
 
-## 2. Create the Pre-Flight Script (`plan.py`)
-Create a standalone Python script that acts as the PM Agent. 
-- It generates a strict Product Requirements Document (PRD) from a user string and saves it to `mailboxes/qa/input.txt`.
-- It runs standard terminal output (no tmux panes required) and exits.
+## Three Modes
 
-## 3. Update Mailbox Initialization
-Ensure the setup logic creates exactly three agent mailboxes on startup if they don't exist: 
-- `mailboxes/qa/`
-- `mailboxes/dev/`
-- `mailboxes/refactor/`
+The wizard (`new-project.sh`) presents three options:
 
-## 4. Update the Tmux Launch Script (`launch.sh`)
-Modify the `tmux` window creation logic to spawn exactly **4 panes** in a readable 2x2 grid (or 1 bottom + 3 top). 
-- Pane 0: The Python Orchestrator (`ORCH`)
-- Pane 1: QA Agent (`QA_RED`)
-- Pane 2: Dev Agent (`DEV_GREEN`)
-- Pane 3: Refactor Agent (`REFACTOR_BLUE`)
-Ensure each agent pane is initialized inside its respective mailbox directory.
+1. **PM Pre-Flight** -- Launches Claude Code as a PM agent to generate a PRD from a vague idea. Standalone step that exits after generating `prd.md`. Does not start the RGR pipeline. Prompt template: `docs/pm_agent.md`.
 
-## 5. Update the Orchestrator State Machine (`orchestrator.py`)
-Rewrite the Python main event loop to manage the 3-agent RGR flow.
-- **Start State:** Watch `mailboxes/qa/input.txt`. Trigger the QA agent.
-- **Step 1 (Red):** Wait for QA to output a test. Move payload to `mailboxes/dev/input.txt` and trigger Dev.
-- **Step 2 (Green):** Wait for Dev to output working code. Move payload to `mailboxes/refactor/input.txt` and trigger Refactor.
-- **Step 3 (Blue):** Wait for Refactor to output clean code. Log completion and idle.
+2. **New Project (`mode: new`)** -- Classic TDD. QA writes failing tests, Dev writes minimum code to pass, Refactor cleans up. Agent prompts loaded from `docs/NEW PROJECT PROMPTS.md`.
 
-Please review this plan, outline your exact steps to modify the files, and wait for my approval before making the changes.
+3. **Existing Project (`mode: existing`)** -- Characterization. QA writes tests that PASS against existing code, Dev verifies coverage (no source changes), Refactor modernizes. Agent prompts loaded from `docs/EXISTING PROJECT PROMPTS.md`. Includes interactive file/folder discovery for selecting source files to characterize.
+
+## Git Worktree Layout
+
+Each project uses a single repo with three worktrees:
+
+```
+~/Repositories/my-app/              # Main repo (default branch, merge target)
+├── .worktrees/
+│   ├── qa/                         # QA worktree (red/<task> branches)
+│   ├── dev/                        # Dev worktree (green/<task> branches)
+│   └── refactor/                   # Refactor worktree (blue/<task> branches)
+```
+
+Each worktree has its own `CLAUDE.md` with agent-specific instructions and MCP communication protocol.
+
+## RGR State Machine
+
+The orchestrator cycles through these states per task:
+
+```
+IDLE ──> WAITING_QA_RED ──> WAITING_DEV_GREEN ──> WAITING_REFACTOR_BLUE ──> IDLE (next task)
+                                                                      └──> BLOCKED (merge conflict)
+```
+
+Git merges happen between phases (bash subprocess, not LLM):
+- `red/<task>` merges into Dev's worktree before GREEN
+- `green/<task>` merges into Refactor's worktree before BLUE
+- `blue/<task>` merges into the default branch (main) after BLUE
+
+Merge conflicts set state to BLOCKED and flag human review.
+
+## Communication (MCP Bridge)
+
+Agents communicate through JSON files in `shared/<project>/mailbox/`:
+
+```
+shared/<project>/mailbox/
+├── to_dev/          # Messages for Dev agent
+├── to_qa/           # Messages for QA agent
+└── to_refactor/     # Messages for Refactor agent
+```
+
+MCP tools available to agents:
+- `check_messages` -- Poll mailbox (with role: dev/qa/refactor)
+- `send_to_qa` -- Dev notifies QA that code is ready for testing
+- `send_to_dev` -- QA sends test results back to Dev
+- `send_to_refactor` -- Dev sends passing code to Refactor
+- `send_refactor_complete` -- Refactor signals cleanup is done
+- `list_workspace` / `read_workspace_file` -- Shared workspace access
+
+The orchestrator polls the mailbox independently via `mailbox_watcher.py`, routes messages, and writes instructions to agent mailboxes.
+
+## Configuration
+
+```yaml
+# projects/<name>/config.yaml
+project: my_project
+mode: new                    # "new" or "existing"
+repo_dir: ~/Repositories/my-app
+
+tmux:
+  session_name: myproject
+
+agents:
+  qa:
+    working_dir: ~/Repositories/my-app/.worktrees/qa
+    pane: qa.0
+  dev:
+    working_dir: ~/Repositories/my-app/.worktrees/dev
+    pane: qa.1
+  refactor:
+    working_dir: ~/Repositories/my-app/.worktrees/refactor
+    pane: qa.2
+```
+
+Shared defaults in `orchestrator/config.yaml` (LLM model, polling interval, max retries, nudge cooldown). Project configs are deep-merged with shared defaults.
+
+## tmux Layout
+
+```
++--------------------+--------------------+
+|  QA_RED [project]  | DEV_GREEN [project]|
+|  (Claude Code)     | (Claude Code)      |
++--------------------+--------------------+
+| REFACTOR_BLUE      |  ORCH [project]    |
+|  (Claude Code)     |  (Python orch)     |
++--------------------+--------------------+
+```
+
+Optional iTerm2 background images: `scripts/setup-iterm-profiles.sh` creates a composite 2x2 image with robot avatars at 35% opacity. `start.sh` switches to the RGR profile and sets transparent pane backgrounds.
