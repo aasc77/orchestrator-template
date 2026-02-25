@@ -81,14 +81,14 @@ Long sessions exhaust the context window. Solutions:
 **"fatal: '<path>' is already checked out"**
 A worktree is already using that branch. Each worktree must be on a different branch:
 ```bash
-cd ~/Repositories/my-app
+cd <your-repo>
 git worktree list    # See what's checked out where
 ```
 
 **Worktree in dirty state after failed merge**
 The orchestrator stashes/unstashes when merging. If a merge fails mid-way:
 ```bash
-cd ~/Repositories/my-app/.worktrees/dev
+cd <your-repo>/.worktrees/dev
 git stash list       # Check for orphaned stashes
 git status           # Check for merge conflicts
 git merge --abort    # If mid-merge
@@ -97,7 +97,7 @@ git merge --abort    # If mid-merge
 **Worktree not found**
 The wizard creates worktrees at `.worktrees/qa`, `.worktrees/dev`, `.worktrees/refactor`. If they're missing:
 ```bash
-cd ~/Repositories/my-app
+cd <your-repo>
 git worktree add .worktrees/qa
 git worktree add .worktrees/dev
 git worktree add .worktrees/refactor
@@ -119,7 +119,7 @@ If the orchestrator reports BLOCKED:
 1. Check the ORCH pane for which merge failed (e.g., "merge red/task-1 into dev failed")
 2. Go to the affected worktree and resolve manually:
    ```bash
-   cd ~/Repositories/my-app/.worktrees/dev
+   cd <your-repo>/.worktrees/dev
    git status    # See conflicting files
    # Resolve conflicts, then:
    git add .

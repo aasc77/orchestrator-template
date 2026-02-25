@@ -102,10 +102,10 @@ my-orchestrator/scripts/setup.sh
 
 ```bash
 vi my-orchestrator/projects/<name>/tasks.json
-vi ~/Repositories/<name>/CLAUDE.md                    # Main repo instructions
-vi ~/Repositories/<name>/.worktrees/qa/CLAUDE.md      # QA agent
-vi ~/Repositories/<name>/.worktrees/dev/CLAUDE.md     # Dev agent
-vi ~/Repositories/<name>/.worktrees/refactor/CLAUDE.md # Refactor agent
+vi <your-repo>/CLAUDE.md                    # Main repo instructions
+vi <your-repo>/.worktrees/qa/CLAUDE.md      # QA agent
+vi <your-repo>/.worktrees/dev/CLAUDE.md     # Dev agent
+vi <your-repo>/.worktrees/refactor/CLAUDE.md # Refactor agent
 ```
 
 **3. Launch:**
@@ -131,7 +131,6 @@ my-orchestrator/scripts/stop.sh <name>
 
 ```bash
 # 1. Set up your repo with git worktrees
-cd ~/Repositories
 git clone git@github.com:yourorg/my-app.git
 cd my-app
 git worktree add .worktrees/qa
@@ -144,9 +143,9 @@ cp -r my-orchestrator/projects/example my-orchestrator/projects/myproject
 # 3. Configure
 vi my-orchestrator/projects/myproject/config.yaml   # Set working dirs, session name
 vi my-orchestrator/projects/myproject/tasks.json     # Define your tasks
-vi ~/Repositories/my-app/.worktrees/qa/CLAUDE.md     # QA agent instructions
-vi ~/Repositories/my-app/.worktrees/dev/CLAUDE.md    # Dev agent instructions
-vi ~/Repositories/my-app/.worktrees/refactor/CLAUDE.md # Refactor agent instructions
+vi my-app/.worktrees/qa/CLAUDE.md     # QA agent instructions
+vi my-app/.worktrees/dev/CLAUDE.md    # Dev agent instructions
+vi my-app/.worktrees/refactor/CLAUDE.md # Refactor agent instructions
 ```
 
 </details>
@@ -178,7 +177,6 @@ Multiple projects can run simultaneously (each gets its own tmux session and mai
 <summary>Manual setup (without wizard)</summary>
 
 ```bash
-cd ~/Repositories
 git clone git@github.com:yourorg/new-project.git
 cd new-project
 git worktree add .worktrees/qa
@@ -194,18 +192,18 @@ Edit `my-orchestrator/projects/<name>/config.yaml` to point at your working dire
 
 ```yaml
 project: my_new_project
-repo_dir: ~/Repositories/new-project
+repo_dir: /path/to/new-project
 tmux:
   session_name: mynewproject
 agents:
   qa:
-    working_dir: ~/Repositories/new-project/.worktrees/qa
+    working_dir: /path/to/new-project/.worktrees/qa
     pane: qa.0
   dev:
-    working_dir: ~/Repositories/new-project/.worktrees/dev
+    working_dir: /path/to/new-project/.worktrees/dev
     pane: qa.1
   refactor:
-    working_dir: ~/Repositories/new-project/.worktrees/refactor
+    working_dir: /path/to/new-project/.worktrees/refactor
     pane: qa.2
 ```
 
@@ -238,10 +236,10 @@ Will create:
   projects/my-existing-app/tasks.json
   shared/my-existing-app/mailbox/{to_dev,to_qa,to_refactor}/
   shared/my-existing-app/workspace/
-  ~/Repositories/my-existing-app/.worktrees/qa/CLAUDE.md
-  ~/Repositories/my-existing-app/.worktrees/dev/CLAUDE.md
-  ~/Repositories/my-existing-app/.worktrees/refactor/CLAUDE.md
-  ~/Repositories/my-existing-app/CLAUDE.md      (exists -- will append MCP section)
+  <your-repo>/.worktrees/qa/CLAUDE.md
+  <your-repo>/.worktrees/dev/CLAUDE.md
+  <your-repo>/.worktrees/refactor/CLAUDE.md
+  <your-repo>/CLAUDE.md      (exists -- will append MCP section)
 ```
 
 Running the wizard again is safe -- it's idempotent.
