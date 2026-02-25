@@ -124,10 +124,13 @@ It also creates the shared mailbox and workspace directories at `shared/my-app/`
 <summary>Manual setup (without wizard)</summary>
 
 ```bash
-# Set up working directories
+# Set up repo with git worktrees
 cd ~/Repositories
-git clone git@github.com:yourorg/my-app.git            # Dev's copy
-git clone git@github.com:yourorg/my-app.git my-app_qa   # QA's copy
+git clone git@github.com:yourorg/my-app.git
+cd my-app
+git worktree add .worktrees/qa
+git worktree add .worktrees/dev
+git worktree add .worktrees/refactor
 
 # Create project from template
 cp -r my-orchestrator/projects/example my-orchestrator/projects/myproject
@@ -175,31 +178,18 @@ The Dev agent implements the work, calls `send_to_qa`, and the orchestrator rout
 
 ### What gets appended to your CLAUDE.md
 
-For the **Dev** agent, this block is appended:
+For each agent, an MCP communication protocol block is appended:
 
-```markdown
----
+**Dev agent** (`send_to_qa`, `check_messages` with role "dev"):
+- Receive task -> implement -> `git add && git commit` -> `send_to_qa`
 
-## Communication Protocol (MCP-Based)
+**QA agent** (`send_to_dev`, `check_messages` with role "qa"):
+- Receive test request -> write/run tests -> `git add && git commit` -> `send_to_dev` with pass/fail
 
-You are the **DEVELOPER** agent in an automated Dev/QA workflow with an AI orchestrator.
+**Refactor agent** (`send_refactor_complete`, `check_messages` with role "refactor"):
+- Receive code -> clean up (DRY, naming, docs) -> run `/review` -> `git add && git commit` -> `send_refactor_complete`
 
-### MCP Tools Available
-You have these tools from the `agent-bridge` MCP server:
-
-- **`send_to_qa`** -- Notify QA that code is ready for testing
-- **`check_messages`** -- Check your mailbox (role: "dev")
-- **`list_workspace`** / **`read_workspace_file`** -- Shared workspace access
-
-### Workflow
-1. Receive a task via `check_messages` or direct instruction
-2. Implement the feature/fix
-3. Call `send_to_qa` with summary, files changed, and test instructions
-4. Call `check_messages` to get QA results
-5. Fix bugs if needed, repeat
-```
-
-For the **QA** agent, a similar block is appended with `send_to_dev` and `check_messages` (role: "qa").
+All agents also have `list_workspace` and `read_workspace_file` for shared workspace access.
 
 The full snippets are in `scripts/new-project.sh` if you need to add them manually.
 
@@ -244,7 +234,7 @@ Tips for writing good tasks:
 
 The wizard creates a `CLAUDE.md` in each working directory. Claude Code picks these up automatically -- both when launched by the orchestrator and when you run `claude` standalone. The more context you add, the better the agents perform. Fill in the `<!-- TODO -->` placeholders the wizard left in each file.
 
-**`~/Repositories/my-app/CLAUDE.md`** (Dev) -- Add under "Project Context":
+**`~/Repositories/my-app/.worktrees/dev/CLAUDE.md`** (Dev) -- Add under "Project Context":
 ```markdown
 ## Project Context
 
@@ -255,7 +245,7 @@ The wizard creates a `CLAUDE.md` in each working directory. Claude Code picks th
 - Existing patterns: see routes/users.js for reference
 ```
 
-**`~/Repositories/my-app_qa/CLAUDE.md`** (QA) -- Add under "Test Environment":
+**`~/Repositories/my-app/.worktrees/qa/CLAUDE.md`** (QA) -- Add under "Test Environment":
 ```markdown
 ## Test Environment
 
@@ -263,6 +253,15 @@ The wizard creates a `CLAUDE.md` in each working directory. Claude Code picks th
 - Test with: `curl`, `httpie`, or write scripts in tests/
 - Database seed: `npm run seed` creates test users
 - Test credentials: test@example.com / password123
+```
+
+**`~/Repositories/my-app/.worktrees/refactor/CLAUDE.md`** (Refactor) -- Add under "Refactoring Guidelines":
+```markdown
+## Refactoring Guidelines
+
+- Do NOT change behavior -- only improve structure, naming, and readability
+- Run `/review` before completing to catch issues
+- Follow existing code style and patterns
 ```
 
 The more context you provide, the better the agents perform.
