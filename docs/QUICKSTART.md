@@ -1,6 +1,43 @@
 # Quickstart Guide
 
-This guide walks you through setting up and running your first automated Dev/QA session from scratch.
+This guide walks you through setting up and running your first automated RGR (Red-Green-Refactor) session from scratch.
+
+## How RGR Works
+
+The orchestrator coordinates three Claude Code agents through a strict Red-Green-Refactor cycle:
+
+```
++----------+     +----------+     +----------+
+|  QA (RED)|---->|DEV (GREEN)|---->| REFACTOR |----> merge to main
+|  writes  |     |  writes  |     |  (BLUE)  |
+|  failing |     |  minimum |     |  cleans  |
+|  tests   |     |  code to |     |  up code |
+|          |     |  pass    |     |          |
++----------+     +----------+     +----------+
+     ^                                  |
+     |         next task                |
+     +----------------------------------+
+```
+
+Each agent works in its own **git worktree** on a dedicated branch:
+
+| Agent | Branch | Role |
+|-------|--------|------|
+| QA | `red/<task-id>` | Writes failing tests (or characterization tests for existing code) |
+| Dev | `green/<task-id>` | Writes minimum code to make tests pass |
+| Refactor | `blue/<task-id>` | Cleans up code (DRY, naming, docs) without changing behavior |
+
+The orchestrator handles git merges between phases automatically:
+- `red/<task>` merges into Dev's worktree
+- `green/<task>` merges into Refactor's worktree
+- `blue/<task>` merges into the default branch (main)
+
+If a merge conflicts, the orchestrator sets state to BLOCKED and flags a human.
+
+### Two modes
+
+- **New project (`mode: new`)**: Classic TDD -- QA writes failing tests, Dev makes them pass
+- **Existing project (`mode: existing`)**: Characterization -- QA writes tests that PASS against existing code, Dev verifies coverage, Refactor cleans up legacy code
 
 ## 1. Install Prerequisites
 
@@ -59,21 +96,29 @@ projects/my-app/
 ├── config.yaml              # Working dirs, session name, pane targets
 └── tasks.json               # Two smoke-test tasks (ready to run)
 
-~/Repositories/my-app/CLAUDE.md      # Dev agent instructions
-~/Repositories/my-app_qa/CLAUDE.md   # QA agent instructions
+~/Repositories/my-app/                   # Main repo
+├── CLAUDE.md                            # Dev agent instructions
+├── .worktrees/
+│   ├── qa/                              # QA worktree (red branches)
+│   │   └── CLAUDE.md                    # QA agent instructions
+│   ├── dev/                             # Dev worktree (green branches)
+│   │   └── CLAUDE.md                    # Dev agent instructions
+│   └── refactor/                        # Refactor worktree (blue branches)
+│       └── CLAUDE.md                    # Refactor agent instructions
 ```
 
 It also creates the shared mailbox and workspace directories at `shared/my-app/`.
 
-**Where things live:** Each project has files in three places:
+**Where things live:**
 
 | Location | What | Purpose |
 |----------|------|---------|
-| `~/Repositories/my-app/` | Your code + `CLAUDE.md` | Where the Dev agent works (CLAUDE.md is picked up automatically) |
-| `~/Repositories/my-app_qa/` | Your code + `CLAUDE.md` | Where the QA agent works (CLAUDE.md is picked up automatically) |
-| `my-orchestrator/projects/my-app/` | Orchestrator config | Tasks and session settings |
-
-The `shared/my-app/` directory is created at runtime for the mailbox (how agents communicate) and workspace (shared files).
+| `~/Repositories/my-app/` | Main repo | Default branch, merge target |
+| `~/Repositories/my-app/.worktrees/qa/` | QA worktree + `CLAUDE.md` | Where QA writes tests (`red/<task>` branches) |
+| `~/Repositories/my-app/.worktrees/dev/` | Dev worktree + `CLAUDE.md` | Where Dev writes code (`green/<task>` branches) |
+| `~/Repositories/my-app/.worktrees/refactor/` | Refactor worktree + `CLAUDE.md` | Where Refactor cleans up (`blue/<task>` branches) |
+| `my-orchestrator/projects/my-app/` | Orchestrator config | Tasks, session settings, session reports |
+| `my-orchestrator/shared/my-app/` | Runtime data | Mailbox (agent-to-agent messages) and shared workspace |
 
 <details>
 <summary>Manual setup (without wizard)</summary>
@@ -259,29 +304,32 @@ To skip all Claude Code confirmation prompts (agents run fully autonomously):
 my-orchestrator/scripts/start.sh myproject --yolo
 ```
 
-You'll see pre-flight checks, then a tmux session with three panes:
+You'll see pre-flight checks, then a tmux session with four panes:
 
 ```
-+------------------+------------------+
-|                  |                  |
-|   DEV [myproj]   |   QA [myproj]    |
-|   (Claude Code)  |   (Claude Code)  |
-|                  |                  |
-+------------------+------------------+
-|                                     |
-|         ORCH [myproj]               |
-|         (Python orchestrator)       |
-|                                     |
-+-------------------------------------+
++--------------------+--------------------+
+|                    |                    |
+|  QA_RED [myproj]   | DEV_GREEN [myproj] |
+|  (Claude Code)     | (Claude Code)      |
+|                    |                    |
++--------------------+--------------------+
+|                    |                    |
+| REFACTOR_BLUE      |  ORCH [myproj]     |
+|  (Claude Code)     |  (Python orch)     |
+|                    |                    |
++--------------------+--------------------+
 ```
 
-**What happens next:**
-1. The orchestrator writes the first task to Dev's mailbox
-2. Dev gets nudged ("You have new messages...")
-3. Dev reads the task, implements it, calls `send_to_qa`
-4. The orchestrator sees the message and writes a test request to QA
-5. QA gets nudged, tests the work, calls `send_to_dev` with results
-6. The orchestrator decides: advance to next task (pass) or send back (fail)
+**What happens next (RGR cycle):**
+1. Orchestrator creates `red/<task>`, `green/<task>`, `blue/<task>` branches in each worktree
+2. Orchestrator writes the first task to QA's mailbox
+3. **RED**: QA writes failing tests on `red/<task>`, commits, calls `send_to_dev`
+4. Orchestrator merges `red/<task>` into Dev's worktree
+5. **GREEN**: Dev writes minimum code to pass tests on `green/<task>`, commits, calls `send_to_refactor`
+6. Orchestrator merges `green/<task>` into Refactor's worktree
+7. **BLUE**: Refactor cleans up code on `blue/<task>`, runs `/review`, commits, calls `send_refactor_complete`
+8. Orchestrator merges `blue/<task>` into the default branch (main)
+9. Repeat for the next task
 
 ## 7. Monitor and Interact
 
@@ -290,17 +338,15 @@ Click the **ORCH** pane (bottom) to interact with the orchestrator.
 ### Built-in commands
 
 ```
-status          Show current task and progress
-tasks           List all tasks with status markers
-skip            Skip a stuck task and move to the next one
-nudge dev       Manually remind Dev to check messages
-nudge qa        Manually remind QA to check messages
-msg dev <text>  Send arbitrary text to Dev's terminal
-msg qa <text>   Send arbitrary text to QA's terminal
-pause           Pause mailbox polling
-resume          Resume polling
-log             Show last 10 log entries
-help            Show all commands
+status                    Show current task, RGR state, and progress
+tasks                     List all tasks with status markers
+skip                      Skip a stuck task and move to the next one
+nudge dev|qa|refactor     Manually remind an agent to check messages
+msg dev|qa|refactor TEXT  Send arbitrary text to an agent's terminal
+pause                     Pause mailbox polling
+resume                    Resume polling
+log                       Show last 10 log entries
+help                      Show all commands
 ```
 
 ### Natural language
@@ -335,7 +381,7 @@ tmux attach -t myproject
 my-orchestrator/scripts/stop.sh myproject
 ```
 
-This sends `/exit` to both Claude Code agents, stops the orchestrator, and kills the tmux session.
+This sends `/exit` to all three Claude Code agents, stops the orchestrator, kills the tmux session, resets the iTerm2 profile, and optionally cleans up task branches.
 
 ## Troubleshooting
 
