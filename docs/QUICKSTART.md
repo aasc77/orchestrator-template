@@ -119,7 +119,7 @@ my-orchestrator/scripts/new-project.sh my-app
 ```
 
 The wizard will:
-1. Ask for the folder name in `~/Repositories/` (your dev repo)
+1. Ask for the folder name of your dev repo
 2. Auto-derive a project name and key from the folder name
 3. Auto-create the QA directory (clones from dev's git remote if available, otherwise creates an empty directory)
 4. Show a summary and ask for confirmation
@@ -130,7 +130,7 @@ projects/my-app/
 ├── config.yaml              # Working dirs, session name, pane targets
 └── tasks.json               # Two smoke-test tasks (ready to run)
 
-~/Repositories/my-app/                   # Main repo
+<your-repo>/                             # Main repo
 ├── CLAUDE.md                            # Dev agent instructions
 ├── .worktrees/
 │   ├── qa/                              # QA worktree (red branches)
@@ -147,10 +147,10 @@ It also creates the shared mailbox and workspace directories at `shared/my-app/`
 
 | Location | What | Purpose |
 |----------|------|---------|
-| `~/Repositories/my-app/` | Main repo | Default branch, merge target |
-| `~/Repositories/my-app/.worktrees/qa/` | QA worktree + `CLAUDE.md` | Where QA writes tests (`red/<task>` branches) |
-| `~/Repositories/my-app/.worktrees/dev/` | Dev worktree + `CLAUDE.md` | Where Dev writes code (`green/<task>` branches) |
-| `~/Repositories/my-app/.worktrees/refactor/` | Refactor worktree + `CLAUDE.md` | Where Refactor cleans up (`blue/<task>` branches) |
+| `<your-repo>/` | Main repo | Default branch, merge target |
+| `<your-repo>/.worktrees/qa/` | QA worktree + `CLAUDE.md` | Where QA writes tests (`red/<task>` branches) |
+| `<your-repo>/.worktrees/dev/` | Dev worktree + `CLAUDE.md` | Where Dev writes code (`green/<task>` branches) |
+| `<your-repo>/.worktrees/refactor/` | Refactor worktree + `CLAUDE.md` | Where Refactor cleans up (`blue/<task>` branches) |
 | `my-orchestrator/projects/my-app/` | Orchestrator config | Tasks, session settings, session reports |
 | `my-orchestrator/shared/my-app/` | Runtime data | Mailbox (agent-to-agent messages) and shared workspace |
 
@@ -159,7 +159,6 @@ It also creates the shared mailbox and workspace directories at `shared/my-app/`
 
 ```bash
 # Set up repo with git worktrees
-cd ~/Repositories
 git clone git@github.com:yourorg/my-app.git
 cd my-app
 git worktree add .worktrees/qa
@@ -184,7 +183,7 @@ my-orchestrator/scripts/new-project.sh my-existing-app
 ```
 
 The wizard will:
-1. Find your existing dev directory at `~/Repositories/my-existing-app`
+1. Find your existing dev directory
 2. Create the QA directory (clone or empty) if it doesn't exist
 3. Show what it will do to each `CLAUDE.md`:
    - **"exists -- will append MCP section"**: Your file is preserved, MCP protocol added to the end
@@ -268,18 +267,17 @@ Tips for writing good tasks:
 
 The wizard creates a `CLAUDE.md` in each working directory. Claude Code picks these up automatically -- both when launched by the orchestrator and when you run `claude` standalone. The more context you add, the better the agents perform. Fill in the `<!-- TODO -->` placeholders the wizard left in each file.
 
-**`~/Repositories/my-app/.worktrees/dev/CLAUDE.md`** (Dev) -- Add under "Project Context":
+**`<your-repo>/.worktrees/dev/CLAUDE.md`** (Dev) -- Add under "Project Context":
 ```markdown
 ## Project Context
 
 - Node.js/Express API with PostgreSQL
-- Codebase: ~/Repositories/my-app
 - Run locally: `npm run dev` (port 3000)
 - Database: `docker compose up -d` starts PostgreSQL on port 5432
 - Existing patterns: see routes/users.js for reference
 ```
 
-**`~/Repositories/my-app/.worktrees/qa/CLAUDE.md`** (QA) -- Add under "Test Environment":
+**`<your-repo>/.worktrees/qa/CLAUDE.md`** (QA) -- Add under "Test Environment":
 ```markdown
 ## Test Environment
 
@@ -289,7 +287,7 @@ The wizard creates a `CLAUDE.md` in each working directory. Claude Code picks th
 - Test credentials: test@example.com / password123
 ```
 
-**`~/Repositories/my-app/.worktrees/refactor/CLAUDE.md`** (Refactor) -- Add under "Refactoring Guidelines":
+**`<your-repo>/.worktrees/refactor/CLAUDE.md`** (Refactor) -- Add under "Refactoring Guidelines":
 ```markdown
 ## Refactoring Guidelines
 
