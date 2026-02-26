@@ -3,7 +3,7 @@
 Automated Red-Green-Refactor workflow with three Claude Code agents: QA writes tests, Dev writes code, Refactor cleans up. A local AI orchestrator routes decisions and manages git merges.
 Supports multiple projects from a single installation.
 
-![Demo: QA, Dev, Refactor, and Orchestrator working together](docs/images/demo.gif?v=3)
+![Demo: QA, Dev, Refactor, and Orchestrator working together](docs/images/demo.gif?v=4)
 
 ## Architecture
 
