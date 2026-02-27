@@ -92,11 +92,17 @@ with open('$TASKS_FILE', 'w') as f:
     success "Tasks reset to pending"
 fi
 
-# ─── Step 4: Clear orchestrator log ──────────────────────────────────────────
+# ─── Step 4: Clear orchestrator log and change log ──────────────────────────
 ORCH_LOG="$ROOT_DIR/orchestrator/orchestrator.log"
 if [[ -f "$ORCH_LOG" ]]; then
     > "$ORCH_LOG"
     success "Orchestrator log cleared"
+fi
+
+CHANGES_CSV="$ROOT_DIR/projects/$PROJECT/changes.csv"
+if [[ -f "$CHANGES_CSV" ]]; then
+    rm -f "$CHANGES_CSV"
+    success "Changes CSV cleared"
 fi
 
 if $NUKE; then

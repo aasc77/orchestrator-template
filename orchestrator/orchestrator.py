@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+import csv
 import json
 import subprocess
 import threading
@@ -111,6 +112,38 @@ def log_to_report(entry: str):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     with open(session_report_path, "a") as f:
         f.write(f"\n### [{timestamp}] {entry}\n")
+
+
+# --- CSV Change Log ---
+changes_csv_path = project_dir / "changes.csv"
+
+
+def log_file_changes(task_id: str, phase: str, repo_path: str, source_branch: str):
+    """Log files changed by a merge to the CSV change log.
+
+    Runs git diff --name-status between the default branch and source branch
+    to capture A(dded), M(odified), D(eleted) files.
+    """
+    success, output = run_git_command(
+        repo_path, "diff", "--name-status", f"{default_branch}..{source_branch}"
+    )
+    if not success or not output.strip():
+        return
+
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    write_header = not changes_csv_path.exists()
+
+    with open(changes_csv_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["timestamp", "task_id", "phase", "action", "file"])
+        for line in output.strip().splitlines():
+            parts = line.split("\t", 1)
+            if len(parts) == 2:
+                action, filepath = parts
+                writer.writerow([timestamp, task_id, phase, action.strip(), filepath.strip()])
+
+    logger.info(f"Logged file changes for {task_id} ({phase}) to {changes_csv_path}")
 
 
 # --- Load Tasks ---
@@ -684,6 +717,7 @@ def handle_qa_message(message: dict):
             print(f"  Resolve manually in {dev_dir} then type 'resume'\n")
             return
         logger.info(f"Merged {red_branch} into Dev worktree successfully")
+        log_file_changes(task_id, "red", dev_dir, red_branch)
 
     # Forward QA's tests to Dev
     if project_mode == "existing":
@@ -749,6 +783,7 @@ def handle_dev_message(message: dict):
             print(f"  Resolve manually in {refactor_dir} then type 'resume'\n")
             return
         logger.info(f"Merged {green_branch} into Refactor worktree successfully")
+        log_file_changes(task_id, "green", refactor_dir, green_branch)
 
     # Forward Dev's code to Refactor
     if project_mode == "existing":
@@ -806,6 +841,8 @@ def handle_refactor_message(message: dict):
         # Merge blue/<task> into default branch
         if repo_dir:
             blue_branch = f"blue/{task_id}"
+            # Capture diff before merge (branch will be merged after)
+            log_file_changes(task_id, "blue", repo_dir, blue_branch)
             logger.info(f"Merging {blue_branch} into {default_branch}...")
             success, output = git_merge_into_default(repo_dir, blue_branch)
             if not success:
