@@ -170,7 +170,13 @@ PMEOF
     echo ""
 
     # Launch Claude Code with PM system prompt and initial prompt
-    (cd "$PM_TMPDIR" && claude --dangerously-skip-permissions "$PM_INITIAL_PROMPT") || true
+    # Review mode: normal permissions (agent discusses first, asks before writing)
+    # Scratch mode: skip permissions (agent generates autonomously)
+    if [[ "$PM_CHOICE" == "2" ]]; then
+        (cd "$PM_TMPDIR" && claude "$PM_INITIAL_PROMPT") || true
+    else
+        (cd "$PM_TMPDIR" && claude --dangerously-skip-permissions "$PM_INITIAL_PROMPT") || true
+    fi
 
     # Check for generated PRD
     if [[ -f "$PM_TMPDIR/prd.md" ]]; then
