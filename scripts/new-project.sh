@@ -83,11 +83,11 @@ if [[ "$PROJECT_MODE" == "pm" ]]; then
     echo ""
     echo "  Do you have an existing PRD to review, or start from scratch?"
     echo ""
-    echo "    a) Start from scratch -- describe your idea and generate a PRD"
-    echo "    b) Review existing PRD -- discuss and refine an existing document"
+    echo "    1) Start from scratch -- describe your idea and generate a PRD"
+    echo "    2) Review existing PRD -- discuss and refine an existing document"
     echo ""
-    read -r -p "  Choice [a/b]: " PM_CHOICE
-    PM_CHOICE="${PM_CHOICE:-a}"
+    read -r -p "  Choice [1/2]: " PM_CHOICE
+    PM_CHOICE="${PM_CHOICE:-1}"
 
     # Extract PM prompt from docs
     PM_PROMPT_FILE="$ROOT_DIR/docs/pm_agent.md"
@@ -98,7 +98,7 @@ if [[ "$PROJECT_MODE" == "pm" ]]; then
 
     PM_TMPDIR=$(mktemp -d)
 
-    if [[ "$PM_CHOICE" =~ ^[Bb]$ ]]; then
+    if [[ "$PM_CHOICE" == "2" ]]; then
         # ─── Review existing PRD ─────────────────────────────────────────
         echo ""
         read -r -p "  Path to your PRD file: " PRD_INPUT_PATH
@@ -131,6 +131,8 @@ Read the file \`existing-prd.md\` in this directory. This is the user's current 
 4. When the user is satisfied, write the final refined version to \`prd.md\`
 PMEOF
 
+        PM_INITIAL_PROMPT="Read existing-prd.md and start the review. Summarize the PRD's scope and key requirements, then identify any gaps or areas to discuss."
+
         info "Launching Claude Code as PM agent (review mode)..."
         info "PRD loaded from: $PRD_INPUT_PATH"
     else
@@ -159,14 +161,16 @@ $USER_IDEA
 Write the complete PRD to a file called \`prd.md\` in this directory.
 PMEOF
 
+        PM_INITIAL_PROMPT="Generate a comprehensive PRD based on the user's idea described in CLAUDE.md."
+
         info "Launching Claude Code as PM agent..."
     fi
 
     echo "  Working dir: $PM_TMPDIR"
     echo ""
 
-    # Launch Claude Code with PM system prompt
-    (cd "$PM_TMPDIR" && claude --dangerously-skip-permissions) || true
+    # Launch Claude Code with PM system prompt and initial prompt
+    (cd "$PM_TMPDIR" && claude --dangerously-skip-permissions "$PM_INITIAL_PROMPT") || true
 
     # Check for generated PRD
     if [[ -f "$PM_TMPDIR/prd.md" ]]; then
