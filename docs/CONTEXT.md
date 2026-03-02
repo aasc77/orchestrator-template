@@ -18,7 +18,7 @@ mcp-bridge/index.js        MCP server exposing mailbox tools to Claude Code agen
 
 The wizard (`new-project.sh`) presents three options:
 
-1. **PM Pre-Flight** -- Launches Claude Code as a PM agent to generate a PRD from a vague idea. Standalone step that exits after generating `prd.md`. Does not start the RGR pipeline. Prompt template: `docs/pm_agent.md`.
+1. **PM Pre-Flight** -- Launches Claude Code as a PM agent to either generate a PRD from a vague idea or review/refine an existing PRD via conversation. Standalone step that exits after producing `prd.md`. Does not start the RGR pipeline. Prompt templates: `docs/pm_agent.md` (`pm_agent/CLAUDE.md` for scratch, `pm_agent_review/CLAUDE.md` for review).
 
 2. **New Project (`mode: new`)** -- Classic TDD. QA writes failing tests, Dev writes minimum code to pass, Refactor cleans up. Agent prompts loaded from `docs/NEW PROJECT PROMPTS.md`.
 
