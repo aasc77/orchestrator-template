@@ -81,13 +81,13 @@ echo ""
 if [[ "$PROJECT_MODE" == "pm" ]]; then
     info "PM Pre-Flight mode"
     echo ""
-    echo "  Describe your idea (one paragraph):"
-    read -r -p "  > " USER_IDEA
-
-    if [[ -z "$USER_IDEA" ]]; then
-        error "Idea cannot be empty."
-        exit 1
-    fi
+    echo "  Do you have an existing PRD to review, or start from scratch?"
+    echo ""
+    echo "    a) Start from scratch -- describe your idea and generate a PRD"
+    echo "    b) Review existing PRD -- discuss and refine an existing document"
+    echo ""
+    read -r -p "  Choice [a/b]: " PM_CHOICE
+    PM_CHOICE="${PM_CHOICE:-a}"
 
     # Extract PM prompt from docs
     PM_PROMPT_FILE="$ROOT_DIR/docs/pm_agent.md"
@@ -96,13 +96,58 @@ if [[ "$PROJECT_MODE" == "pm" ]]; then
         exit 1
     fi
 
-    PM_PROMPT=$(extract_prompt "$PM_PROMPT_FILE" "pm_agent/CLAUDE.md")
-    # Replace placeholder with user idea
-    PM_PROMPT="${PM_PROMPT//\{\{USER_IDEA\}\}/$USER_IDEA}"
-
-    # Create temp working directory
     PM_TMPDIR=$(mktemp -d)
-    cat > "$PM_TMPDIR/CLAUDE.md" <<PMEOF
+
+    if [[ "$PM_CHOICE" =~ ^[Bb]$ ]]; then
+        # ─── Review existing PRD ─────────────────────────────────────────
+        echo ""
+        read -r -p "  Path to your PRD file: " PRD_INPUT_PATH
+
+        # Expand ~ to home directory
+        PRD_INPUT_PATH="${PRD_INPUT_PATH/#\~/$HOME}"
+
+        if [[ ! -f "$PRD_INPUT_PATH" ]]; then
+            error "File not found: $PRD_INPUT_PATH"
+            exit 1
+        fi
+
+        PM_PROMPT=$(extract_prompt "$PM_PROMPT_FILE" "pm_agent_review/CLAUDE.md")
+
+        # Copy PRD into temp dir so the agent can read it
+        cp "$PRD_INPUT_PATH" "$PM_TMPDIR/existing-prd.md"
+
+        cat > "$PM_TMPDIR/CLAUDE.md" <<PMEOF
+$PM_PROMPT
+
+---
+
+## Existing PRD
+Read the file \`existing-prd.md\` in this directory. This is the user's current PRD.
+
+## Process
+1. Read existing-prd.md
+2. Summarize it back to the user
+3. Discuss gaps, ambiguities, and improvements
+4. When the user is satisfied, write the final refined version to \`prd.md\`
+PMEOF
+
+        info "Launching Claude Code as PM agent (review mode)..."
+        info "PRD loaded from: $PRD_INPUT_PATH"
+    else
+        # ─── Generate from scratch ───────────────────────────────────────
+        echo ""
+        echo "  Describe your idea (one paragraph):"
+        read -r -p "  > " USER_IDEA
+
+        if [[ -z "$USER_IDEA" ]]; then
+            error "Idea cannot be empty."
+            exit 1
+        fi
+
+        PM_PROMPT=$(extract_prompt "$PM_PROMPT_FILE" "pm_agent/CLAUDE.md")
+        PM_PROMPT="${PM_PROMPT//\{\{USER_IDEA\}\}/$USER_IDEA}"
+
+        cat > "$PM_TMPDIR/CLAUDE.md" <<PMEOF
 $PM_PROMPT
 
 ---
@@ -114,7 +159,9 @@ $USER_IDEA
 Write the complete PRD to a file called \`prd.md\` in this directory.
 PMEOF
 
-    info "Launching Claude Code as PM agent..."
+        info "Launching Claude Code as PM agent..."
+    fi
+
     echo "  Working dir: $PM_TMPDIR"
     echo ""
 
@@ -123,7 +170,7 @@ PMEOF
 
     # Check for generated PRD
     if [[ -f "$PM_TMPDIR/prd.md" ]]; then
-        success "PRD generated: $PM_TMPDIR/prd.md"
+        success "PRD ready: $PM_TMPDIR/prd.md"
         echo ""
         echo "  ${BOLD}Preview (first 20 lines):${RESET}"
         head -20 "$PM_TMPDIR/prd.md" | sed 's/^/    /'

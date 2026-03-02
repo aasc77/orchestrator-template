@@ -29,7 +29,9 @@ my-orchestrator/scripts/new-project.sh my-app     # skip folder prompt
 ```
 
 The wizard asks you to pick a mode:
-1. **PM Pre-Flight** -- generate a PRD from a vague idea (exits after, run wizard again for mode 2/3)
+1. **PM Pre-Flight** -- generate or review a PRD (exits after, run wizard again for mode 2/3)
+   - **Start from scratch** -- describe your idea and the PM agent generates a full PRD
+   - **Review existing PRD** -- provide a file path, the PM agent reads it, discusses gaps and improvements with you, then writes the refined version
 2. **New Project** -- classic TDD on a new codebase
 3. **Existing Project** -- characterization tests on an existing codebase
 

@@ -51,7 +51,7 @@ The wizard (`new-project.sh`) presents three options:
 
 | Mode | When to use | What happens |
 |------|-------------|--------------|
-| **1. PM Pre-Flight** | You have a vague idea but no clear requirements | Claude generates a PRD from your idea, then exits. Run the wizard again with mode 2 or 3 to start building. |
+| **1. PM Pre-Flight** | You have a vague idea, or an existing PRD to refine | Claude generates a PRD from scratch or reviews/refines your existing PRD, then exits. Run the wizard again with mode 2 or 3 to start building. |
 | **2. New Project (`mode: new`)** | Greenfield code -- nothing exists yet | Classic TDD: QA writes **failing** tests, Dev writes minimum code to pass, Refactor cleans up |
 | **3. Existing Project (`mode: existing`)** | You have a working codebase that needs tests and cleanup | Characterization: QA writes tests that **PASS** against existing code, Dev verifies coverage (no source changes), Refactor modernizes legacy code |
 
@@ -62,21 +62,21 @@ The wizard (`new-project.sh`) presents three options:
 
 ### PM Pre-Flight (Optional First Step)
 
-PM Pre-Flight is a standalone preprocessing step that runs _before_ the RGR pipeline. It takes a vague idea and generates a structured Product Requirements Document (PRD):
+PM Pre-Flight is a standalone preprocessing step that runs _before_ the RGR pipeline. It either generates a PRD from scratch or reviews an existing one:
 
 ```bash
 my-orchestrator/scripts/new-project.sh
 # Select option 1: PM Pre-Flight
-# Enter your idea (e.g., "a REST API for managing book reviews")
+# Choose (a) start from scratch, or (b) review existing PRD
 ```
 
 What it does:
-1. Launches Claude Code as a PM agent (using the prompt in `docs/pm_agent.md`)
-2. Generates a strict PRD with happy paths, edge cases, and error states
+1. **From scratch**: You describe your idea, Claude generates a strict PRD with happy paths, edge cases, and error states
+2. **Review existing**: You provide a file path to your PRD, Claude reads it, discusses gaps and improvements with you, then writes the refined version
 3. Optionally saves the PRD to a project's QA mailbox as initial input
 4. **Exits** -- PM mode does not start the RGR pipeline
 
-After PM generates your PRD, run the wizard again and select mode 2 (New Project) or 3 (Existing Project) to begin the RGR cycle. The PRD in the QA mailbox gives the QA agent clear requirements to write tests against.
+After the PRD is ready, run the wizard again and select mode 2 (New Project) or 3 (Existing Project) to begin the RGR cycle. The PRD in the QA mailbox gives the QA agent clear requirements to write tests against.
 
 ## Prerequisites
 
