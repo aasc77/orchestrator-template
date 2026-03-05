@@ -634,6 +634,79 @@ TASKEOF
         echo "}"
     } > "$PROJECT_DIR/tasks.json"
     info "Created projects/$PROJECT_KEY/tasks.json (${#CHAR_FILES[@]} characterization tasks)"
+elif [[ -n "$PRD_PATH" ]]; then
+    # Generate tasks from PRD using Claude
+    info "Generating tasks from PRD..."
+    TASK_GEN_TMPDIR=$(mktemp -d)
+    cp "$PRD_PATH" "$TASK_GEN_TMPDIR/prd.md"
+
+    cat > "$TASK_GEN_TMPDIR/CLAUDE.md" <<'TASKGENEOF'
+# Task Generator
+
+You are a task decomposition agent. You read a PRD and produce a tasks.json file.
+
+## Rules
+- Each task must be a single, well-scoped unit of work for one Red-Green-Refactor cycle
+- Tasks should be ordered by dependency (foundational pieces first)
+- Task IDs use the format `rgr-N` (sequential)
+- Each task needs: id, title, description, acceptance_criteria array, status ("pending"), attempts (0), max_attempts (5)
+- Keep descriptions precise -- the QA agent writes failing tests from them, the Dev agent implements from those tests
+- Do NOT create setup/infrastructure tasks (repo init, CI, etc.) -- only feature/logic tasks
+- Aim for 5-15 tasks depending on PRD scope
+- Output ONLY valid JSON to tasks.json, no markdown fences, no commentary
+TASKGENEOF
+
+    TASK_GEN_PROMPT="Read prd.md. Decompose it into RGR tasks and write the result to tasks.json. The JSON must have keys: project (\"$PROJECT_NAME\") and tasks (array). Output ONLY the file, nothing else."
+
+    (cd "$TASK_GEN_TMPDIR" && claude --dangerously-skip-permissions "$TASK_GEN_PROMPT") || true
+
+    if [[ -f "$TASK_GEN_TMPDIR/tasks.json" ]]; then
+        # Validate it's valid JSON
+        if python3 -c "import json; json.load(open('$TASK_GEN_TMPDIR/tasks.json'))" 2>/dev/null; then
+            cp "$TASK_GEN_TMPDIR/tasks.json" "$PROJECT_DIR/tasks.json"
+            TASK_COUNT=$(python3 -c "import json; print(len(json.load(open('$PROJECT_DIR/tasks.json'))['tasks']))")
+            success "Generated $TASK_COUNT tasks from PRD"
+        else
+            warn "Generated tasks.json is invalid JSON -- falling back to sample task"
+            cat > "$PROJECT_DIR/tasks.json" <<EOF
+{
+  "project": "$PROJECT_NAME",
+  "tasks": [
+    {
+      "id": "rgr-1",
+      "title": "PLACEHOLDER -- replace with real tasks from PRD",
+      "description": "The task generator failed. Read prd.md in the repo root and manually create tasks.",
+      "acceptance_criteria": ["Replace this task with real ones from the PRD"],
+      "status": "pending",
+      "attempts": 0,
+      "max_attempts": 5
+    }
+  ]
+}
+EOF
+            info "Created projects/$PROJECT_KEY/tasks.json (placeholder)"
+        fi
+    else
+        warn "Task generator did not produce tasks.json -- falling back to sample task"
+        cat > "$PROJECT_DIR/tasks.json" <<EOF
+{
+  "project": "$PROJECT_NAME",
+  "tasks": [
+    {
+      "id": "rgr-1",
+      "title": "PLACEHOLDER -- replace with real tasks from PRD",
+      "description": "The task generator failed. Read prd.md in the repo root and manually create tasks.",
+      "acceptance_criteria": ["Replace this task with real ones from the PRD"],
+      "status": "pending",
+      "attempts": 0,
+      "max_attempts": 5
+    }
+  ]
+}
+EOF
+        info "Created projects/$PROJECT_KEY/tasks.json (placeholder)"
+    fi
+    rm -rf "$TASK_GEN_TMPDIR"
 else
     cat > "$PROJECT_DIR/tasks.json" <<EOF
 {
