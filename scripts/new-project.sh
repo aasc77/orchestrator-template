@@ -635,30 +635,45 @@ TASKEOF
     } > "$PROJECT_DIR/tasks.json"
     info "Created projects/$PROJECT_KEY/tasks.json (${#CHAR_FILES[@]} characterization tasks)"
 elif [[ -n "$PRD_PATH" ]]; then
-    # Generate tasks from PRD using Claude
-    info "Generating tasks from PRD..."
+    # Interactive task planning session -- user discusses breakdown with Claude
+    info "Launching Task Planner to decompose PRD into RGR tasks..."
+    echo ""
     TASK_GEN_TMPDIR=$(mktemp -d)
     cp "$PRD_PATH" "$TASK_GEN_TMPDIR/prd.md"
 
     cat > "$TASK_GEN_TMPDIR/CLAUDE.md" <<'TASKGENEOF'
-# Task Generator
+# Task Planner
 
-You are a task decomposition agent. You read a PRD and produce a tasks.json file.
+You are a task planning agent. You read a PRD and collaborate with the user to produce a well-scoped tasks.json file for a Red-Green-Refactor development pipeline.
 
-## Rules
-- Each task must be a single, well-scoped unit of work for one Red-Green-Refactor cycle
-- Tasks should be ordered by dependency (foundational pieces first)
-- Task IDs use the format `rgr-N` (sequential)
-- Each task needs: id, title, description, acceptance_criteria array, status ("pending"), attempts (0), max_attempts (5)
-- Keep descriptions precise -- the QA agent writes failing tests from them, the Dev agent implements from those tests
-- Do NOT create setup/infrastructure tasks (repo init, CI, etc.) -- only feature/logic tasks
+## Process
+1. Read `prd.md`
+2. Propose a task breakdown to the user -- show a numbered list with task titles, short descriptions, and key acceptance criteria
+3. Discuss with the user: ask about priorities, scope questions, whether tasks should be split or merged, dependency ordering
+4. Iterate until the user approves the plan
+5. Only when the user says the plan is good, write `tasks.json`
+
+## Task Rules
+- Each task = one RGR cycle (QA writes failing tests, Dev implements, Refactor cleans up)
+- Tasks ordered by dependency (foundational pieces first, features that depend on them later)
+- Task IDs: `rgr-N` (sequential starting at 1)
+- Each task needs: id, title, description, acceptance_criteria (array), status ("pending"), attempts (0), max_attempts (5)
+- Descriptions must be precise enough for QA to write failing tests and Dev to implement from those tests
+- Do NOT create setup/infrastructure tasks (repo init, CI, configs) -- only feature/logic/module tasks
 - Aim for 5-15 tasks depending on PRD scope
-- Output ONLY valid JSON to tasks.json, no markdown fences, no commentary
+- Group related functionality into single tasks when they share the same test surface
+- Split tasks that would require more than ~200 lines of implementation
+
+## Output Format
+When writing tasks.json, output ONLY valid JSON with keys: "project" (string) and "tasks" (array). No markdown fences.
 TASKGENEOF
 
-    TASK_GEN_PROMPT="Read prd.md. Decompose it into RGR tasks and write the result to tasks.json. The JSON must have keys: project (\"$PROJECT_NAME\") and tasks (array). Output ONLY the file, nothing else."
+    TASK_GEN_PROMPT="Read prd.md. Propose a task breakdown for the RGR pipeline. Show me the list and let's discuss before you write tasks.json."
 
-    (cd "$TASK_GEN_TMPDIR" && claude --dangerously-skip-permissions "$TASK_GEN_PROMPT") || true
+    echo "  Working dir: $TASK_GEN_TMPDIR"
+    echo ""
+
+    (cd "$TASK_GEN_TMPDIR" && claude "$TASK_GEN_PROMPT") || true
 
     if [[ -f "$TASK_GEN_TMPDIR/tasks.json" ]]; then
         # Validate it's valid JSON
@@ -667,7 +682,7 @@ TASKGENEOF
             TASK_COUNT=$(python3 -c "import json; print(len(json.load(open('$PROJECT_DIR/tasks.json'))['tasks']))")
             success "Generated $TASK_COUNT tasks from PRD"
         else
-            warn "Generated tasks.json is invalid JSON -- falling back to sample task"
+            warn "Generated tasks.json is invalid JSON -- falling back to placeholder"
             cat > "$PROJECT_DIR/tasks.json" <<EOF
 {
   "project": "$PROJECT_NAME",
@@ -675,7 +690,7 @@ TASKGENEOF
     {
       "id": "rgr-1",
       "title": "PLACEHOLDER -- replace with real tasks from PRD",
-      "description": "The task generator failed. Read prd.md in the repo root and manually create tasks.",
+      "description": "The task planner did not produce valid JSON. Read prd.md in the repo root and manually create tasks.",
       "acceptance_criteria": ["Replace this task with real ones from the PRD"],
       "status": "pending",
       "attempts": 0,
@@ -687,7 +702,7 @@ EOF
             info "Created projects/$PROJECT_KEY/tasks.json (placeholder)"
         fi
     else
-        warn "Task generator did not produce tasks.json -- falling back to sample task"
+        warn "Task planner did not produce tasks.json -- falling back to placeholder"
         cat > "$PROJECT_DIR/tasks.json" <<EOF
 {
   "project": "$PROJECT_NAME",
@@ -695,7 +710,7 @@ EOF
     {
       "id": "rgr-1",
       "title": "PLACEHOLDER -- replace with real tasks from PRD",
-      "description": "The task generator failed. Read prd.md in the repo root and manually create tasks.",
+      "description": "The task planner did not produce a file. Read prd.md in the repo root and manually create tasks.",
       "acceptance_criteria": ["Replace this task with real ones from the PRD"],
       "status": "pending",
       "attempts": 0,
