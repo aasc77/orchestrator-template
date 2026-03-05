@@ -1022,6 +1022,144 @@ else
     info "Created $REFACTOR_DIR/CLAUDE.md"
 fi
 
+# --- README.md ---
+if [[ ! -f "$REPO_DIR/README.md" ]]; then
+    PRD_LINE=""
+    if [[ -n "$PRD_PATH" ]]; then
+        PRD_LINE="
+See \`prd.md\` for the full product requirements document."
+    fi
+
+    if [[ "$PROJECT_MODE" == "existing" ]]; then
+        MODE_DESC="Characterization tests for an existing codebase, using the Red-Green-Refactor (RGR) pipeline."
+        WORKFLOW_DESC="1. **QA (RED)**: Writes characterization tests that PASS against existing code
+2. **Dev (GREEN)**: Reviews test coverage, adds missing edge cases
+3. **Refactor (BLUE)**: Cleans up code quality while keeping tests green"
+    else
+        MODE_DESC="Built using the Red-Green-Refactor (RGR) pipeline with three AI agents."
+        WORKFLOW_DESC="1. **QA (RED)**: Writes failing tests that define the expected behavior
+2. **Dev (GREEN)**: Writes minimum code to make tests pass
+3. **Refactor (BLUE)**: Improves code quality without changing behavior"
+    fi
+
+    cat > "$REPO_DIR/README.md" <<READMEEOF
+# $PROJECT_NAME
+
+$MODE_DESC
+$PRD_LINE
+
+## Development Workflow
+
+This project uses an automated RGR (Red-Green-Refactor) cycle:
+
+$WORKFLOW_DESC
+
+## Project Structure
+
+\`\`\`
+$FOLDER_NAME/
+├── tests/              # Test files
+├── prd.md              # Product requirements (if provided)
+└── ...                 # Implementation files
+\`\`\`
+
+## Running Tests
+
+\`\`\`bash
+cd $REPO_DIR
+python3 -m pytest tests/ -v
+\`\`\`
+
+## Orchestrator
+
+This project is managed by [orchestrator-template](https://github.com/aasc77/orchestrator-template).
+
+\`\`\`bash
+# Start the RGR pipeline
+$ROOT_DIR/scripts/start.sh $PROJECT_KEY
+
+# Stop
+$ROOT_DIR/scripts/stop.sh $PROJECT_KEY
+\`\`\`
+READMEEOF
+    git -C "$REPO_DIR" add README.md
+    git -C "$REPO_DIR" commit --quiet -m "docs: add README.md"
+    info "Created README.md"
+else
+    info "README.md already exists -- skipped"
+fi
+
+# --- QUICKSTART.md ---
+if [[ ! -f "$REPO_DIR/QUICKSTART.md" ]]; then
+    cat > "$REPO_DIR/QUICKSTART.md" <<QSEOF
+# Quickstart
+
+## Prerequisites
+
+\`\`\`bash
+brew install tmux python3 ollama
+npm install -g @anthropic-ai/claude-code
+ollama serve   # leave running
+\`\`\`
+
+## Run the RGR Pipeline
+
+\`\`\`bash
+cd $ROOT_DIR
+./scripts/start.sh $PROJECT_KEY
+\`\`\`
+
+This opens a tmux session with a 2x2 grid:
+
+\`\`\`
++--------------------+--------------------+
+|  QA (RED)          | Dev (GREEN)        |
++--------------------+--------------------+
+| Refactor (BLUE)    | Orchestrator       |
++--------------------+--------------------+
+\`\`\`
+
+## Orchestrator Commands
+
+Type these in the Orchestrator pane:
+
+| Command | Description |
+|---------|-------------|
+| \`status\` | Current task and progress |
+| \`tasks\` | List all tasks with status |
+| \`nudge dev\|qa\|refactor\` | Manually nudge an agent |
+| \`skip\` | Skip current stuck task |
+| \`pause\` / \`resume\` | Pause/resume polling |
+| \`help\` | Show all commands |
+
+## Stop
+
+\`\`\`bash
+$ROOT_DIR/scripts/stop.sh $PROJECT_KEY
+\`\`\`
+
+## Running Tests Manually
+
+\`\`\`bash
+cd $REPO_DIR
+python3 -m pytest tests/ -v
+\`\`\`
+QSEOF
+    git -C "$REPO_DIR" add QUICKSTART.md
+    git -C "$REPO_DIR" commit --quiet -m "docs: add QUICKSTART.md"
+    info "Created QUICKSTART.md"
+else
+    info "QUICKSTART.md already exists -- skipped"
+fi
+
+# Sync docs into worktrees
+for wt_name in qa dev refactor; do
+    wt_path="$REPO_DIR/.worktrees/$wt_name"
+    if [[ -d "$wt_path" ]]; then
+        git -C "$wt_path" merge --quiet "$DEFAULT_BRANCH" 2>/dev/null || true
+    fi
+done
+
 # Clear cleanup markers on success
 CLEANUP_PROJECT_DIR=""
 CLEANUP_SHARED_DIR=""
