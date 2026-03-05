@@ -129,6 +129,7 @@ Read the file \`existing-prd.md\` in this directory. This is the user's current 
 2. Summarize it back to the user
 3. Discuss gaps, ambiguities, and improvements
 4. When the user is satisfied, write the final refined version to \`prd.md\`
+5. After writing prd.md, tell the user: "PRD written! Type /exit to continue." and stop.
 PMEOF
 
         PM_INITIAL_PROMPT="Read existing-prd.md and start the review. Summarize the PRD's scope and key requirements, then identify any gaps or areas to discuss."
@@ -168,6 +169,10 @@ PMEOF
 
     echo "  Working dir: $PM_TMPDIR"
     echo ""
+    if [[ "$PM_CHOICE" == "2" ]]; then
+        echo "  ${YELLOW}When the PM finishes writing prd.md, type /exit to continue.${RESET}"
+        echo ""
+    fi
 
     # Launch Claude Code with PM system prompt and initial prompt
     # Review mode: normal permissions (agent discusses first, asks before writing)
@@ -177,6 +182,10 @@ PMEOF
     else
         (cd "$PM_TMPDIR" && claude --dangerously-skip-permissions "$PM_INITIAL_PROMPT") || true
     fi
+
+    echo ""
+    info "PM session ended."
+    echo ""
 
     # Check for generated PRD
     if [[ -f "$PM_TMPDIR/prd.md" ]]; then
@@ -652,6 +661,7 @@ You are a task planning agent. You read a PRD and collaborate with the user to p
 3. Discuss with the user: ask about priorities, scope questions, whether tasks should be split or merged, dependency ordering
 4. Iterate until the user approves the plan
 5. Only when the user says the plan is good, write `tasks.json`
+6. After writing tasks.json, tell the user: "Tasks written! Type /exit to continue with project setup." and stop.
 
 ## Task Rules
 - Each task = one RGR cycle (QA writes failing tests, Dev implements, Refactor cleans up)
@@ -672,8 +682,14 @@ TASKGENEOF
 
     echo "  Working dir: $TASK_GEN_TMPDIR"
     echo ""
+    echo "  ${YELLOW}When the Task Planner finishes writing tasks.json, type /exit to continue.${RESET}"
+    echo ""
 
     (cd "$TASK_GEN_TMPDIR" && claude "$TASK_GEN_PROMPT") || true
+
+    echo ""
+    info "Task Planner session ended. Continuing with project setup..."
+    echo ""
 
     if [[ -f "$TASK_GEN_TMPDIR/tasks.json" ]]; then
         # Validate it's valid JSON
