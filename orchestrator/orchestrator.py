@@ -153,6 +153,7 @@ with open(tasks_path) as f:
 tasks = tasks_data["tasks"]
 
 rgr_state = RGRState.IDLE
+_blocked_context = None  # Stores (phase, task, message_content) when BLOCKED
 
 # --- Track current task branch suffix ---
 current_task_id = None
@@ -457,6 +458,47 @@ Keep "text" concise and actionable."""
         print(f"\n  {reply_text or fallback}\n")
 
 
+def _resume_from_blocked():
+    """Resume the pipeline after a merge conflict has been manually resolved."""
+    global rgr_state, _blocked_context
+
+    if _blocked_context is None:
+        print("  No blocked context found. Setting state to IDLE.")
+        rgr_state = RGRState.IDLE
+        return
+
+    phase, task, content = _blocked_context
+    _blocked_context = None
+    task_id = current_task_id or task["id"]
+
+    if phase == "red_to_dev":
+        # Conflict was red -> dev. Re-run handle_qa_message to continue from the merge point.
+        logger.info(f"Resuming from BLOCKED: re-driving QA->Dev handoff for {task_id}")
+        rgr_state = RGRState.WAITING_QA_RED
+        handle_qa_message({"content": content})
+
+    elif phase == "green_to_refactor":
+        # Conflict was green -> refactor. Re-run handle_dev_message to continue.
+        logger.info(f"Resuming from BLOCKED: re-driving Dev->Refactor handoff for {task_id}")
+        rgr_state = RGRState.WAITING_DEV_GREEN
+        handle_dev_message({"content": content})
+
+    elif phase == "blue_to_main":
+        # Conflict was blue -> main. Re-run handle_refactor_message to continue.
+        logger.info(f"Resuming from BLOCKED: re-driving Refactor->main merge for {task_id}")
+        rgr_state = RGRState.WAITING_REFACTOR_BLUE
+        handle_refactor_message({"content": content})
+
+    else:
+        logger.warning(f"Unknown blocked phase: {phase}")
+        rgr_state = RGRState.IDLE
+
+    if rgr_state != RGRState.BLOCKED:
+        print(f"  Resumed successfully. State: {rgr_state.value}")
+    else:
+        print("  Still BLOCKED -- merge may have failed again. Check the conflict.")
+
+
 def handle_command(cmd: str):
     """Process an interactive command."""
     global _paused
@@ -537,8 +579,11 @@ def handle_command(cmd: str):
         print("  Polling paused. Type 'resume' to continue.")
 
     elif command == "resume":
-        _paused = False
-        print("  Polling resumed.")
+        if rgr_state == RGRState.BLOCKED:
+            _resume_from_blocked()
+        else:
+            _paused = False
+            print("  Polling resumed.")
 
     elif command == "log":
         try:
@@ -722,6 +767,7 @@ def handle_qa_message(message: dict):
         success, output = git_merge_branch(dev_dir, red_branch)
         if not success:
             rgr_state = RGRState.BLOCKED
+            _blocked_context = ("red_to_dev", task, content)
             logger.error(f"Failed to merge {red_branch} into Dev: {output}")
             print(f"\nBLOCKED: Git merge failed ({red_branch} -> Dev)")
             print(f"  {output}")
@@ -788,6 +834,7 @@ def handle_dev_message(message: dict):
         success, output = git_merge_branch(refactor_dir, green_branch)
         if not success:
             rgr_state = RGRState.BLOCKED
+            _blocked_context = ("green_to_refactor", task, content)
             logger.error(f"Failed to merge {green_branch} into Refactor: {output}")
             print(f"\nBLOCKED: Git merge failed ({green_branch} -> Refactor)")
             print(f"  {output}")
@@ -858,6 +905,7 @@ def handle_refactor_message(message: dict):
             success, output = git_merge_into_default(repo_dir, blue_branch)
             if not success:
                 rgr_state = RGRState.BLOCKED
+                _blocked_context = ("blue_to_main", task, content)
                 logger.error(f"Failed to merge {blue_branch} into {default_branch}: {output}")
                 print(f"\nBLOCKED: Git merge into {default_branch} failed ({blue_branch})")
                 print(f"  {output}")
