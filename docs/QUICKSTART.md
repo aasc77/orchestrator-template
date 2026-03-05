@@ -35,6 +35,8 @@ The wizard asks you to pick a mode:
 2. **New Project** -- classic TDD on a new codebase
 3. **Existing Project** -- characterization tests on an existing codebase
 
+For modes 2 and 3, the wizard then asks **"Do you have a PRD?"** -- if yes, provide the file path and the wizard launches an interactive **Task Planner** that reads your PRD, proposes a task breakdown, discusses it with you, and writes `tasks.json` when you approve. Type `/exit` after the planner finishes to continue setup.
+
 It then creates worktrees, config, tasks, and agent `CLAUDE.md` files. See [README > Three Modes](../README.md#three-modes) for details on when to use each.
 
 ## 4. Customize
@@ -42,13 +44,13 @@ It then creates worktrees, config, tasks, and agent `CLAUDE.md` files. See [READ
 Edit the generated files before launching:
 
 ```bash
-vi my-orchestrator/projects/<name>/tasks.json       # replace smoke-test tasks with real work
+vi my-orchestrator/projects/<name>/tasks.json       # review tasks (auto-generated from PRD, or replace sample)
 vi <your-repo>/.worktrees/qa/CLAUDE.md              # QA: test environment, credentials
 vi <your-repo>/.worktrees/dev/CLAUDE.md             # Dev: tech stack, architecture, patterns
 vi <your-repo>/.worktrees/refactor/CLAUDE.md        # Refactor: code style, guidelines
 ```
 
-Fill in the `<!-- TODO -->` placeholders the wizard left in each `CLAUDE.md`. The more project context you add, the better the agents perform.
+If you provided a PRD, `tasks.json` already has real tasks from the Task Planner and each agent `CLAUDE.md` includes a PRD reference section. Fill in the `<!-- TODO -->` placeholders the wizard left in each `CLAUDE.md`. The more project context you add, the better the agents perform.
 
 ## 5. Launch
 
