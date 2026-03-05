@@ -24,6 +24,16 @@ The wizard (`new-project.sh`) presents three options:
 
 3. **Existing Project (`mode: existing`)** -- Characterization. QA writes tests that PASS against existing code, Dev verifies coverage (no source changes), Refactor modernizes. Agent prompts loaded from `docs/EXISTING PROJECT PROMPTS.md`. Includes interactive file/folder discovery for selecting source files to characterize.
 
+### PRD Import & Task Planner (Modes 2 and 3)
+
+After mode selection, the wizard asks "Do you have a PRD?" If yes:
+
+1. PRD is copied to the repo root as `prd.md`, committed, and merged into all worktrees
+2. An interactive **Task Planner** session launches -- Claude reads the PRD, proposes a task breakdown, discusses scope/dependencies/priorities with you, and writes `tasks.json` only after you approve
+3. All agent `CLAUDE.md` files get a PRD reference section instructing them to trace work back to PRD requirements
+
+Without a PRD, the wizard generates a sample greeting task and no PRD section is added to agent instructions.
+
 ## Git Worktree Layout
 
 Each project uses a single repo with three worktrees:

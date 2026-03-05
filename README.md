@@ -67,16 +67,26 @@ PM Pre-Flight is a standalone preprocessing step that runs _before_ the RGR pipe
 ```bash
 my-orchestrator/scripts/new-project.sh
 # Select option 1: PM Pre-Flight
-# Choose (a) start from scratch, or (b) review existing PRD
+# Choose 1) start from scratch, or 2) review existing PRD
 ```
 
 What it does:
 1. **From scratch**: You describe your idea, Claude generates a strict PRD with happy paths, edge cases, and error states
 2. **Review existing**: You provide a file path to your PRD, Claude reads it, discusses gaps and improvements with you, then writes the refined version
-3. Optionally saves the PRD to a project's QA mailbox as initial input
-4. **Exits** -- PM mode does not start the RGR pipeline
+3. **Exits** -- PM mode does not start the RGR pipeline. It prints the `prd.md` path for the next step.
 
-After the PRD is ready, run the wizard again and select mode 2 (New Project) or 3 (Existing Project) to begin the RGR cycle. The PRD in the QA mailbox gives the QA agent clear requirements to write tests against.
+After the PRD is ready, run the wizard again and select mode 2 (New Project) or 3 (Existing Project). The wizard will ask if you have a PRD -- provide the path and it feeds into the **Task Planner**.
+
+### Task Planner (Automatic with PRD)
+
+When you provide a PRD in mode 2 or 3, the wizard launches an interactive **Task Planner** session:
+
+1. Claude reads your PRD and proposes a task breakdown (ordered by dependency)
+2. You discuss: adjust scope, split/merge tasks, reorder priorities
+3. When you approve, the planner writes `tasks.json` with properly scoped RGR tasks
+4. Type `/exit` to continue -- the wizard finishes setup and launches the pipeline
+
+Without a PRD, the wizard generates a sample greeting task for you to replace manually.
 
 ## Prerequisites
 
@@ -169,9 +179,11 @@ my-orchestrator/scripts/new-project.sh my-app
 ```
 
 After the wizard finishes, customize the generated files:
-1. Replace smoke-test tasks in `projects/<name>/tasks.json` with your real work
+1. Review `projects/<name>/tasks.json` -- if you provided a PRD, the Task Planner already generated real tasks; otherwise replace the sample task with your real work
 2. Fill in the `<!-- TODO -->` placeholders in `CLAUDE.md` in each worktree directory
 3. Launch with `my-orchestrator/scripts/start.sh <name>`
+
+If a PRD was provided, it's committed to the repo root as `prd.md` and all agent `CLAUDE.md` files include a section instructing them to reference it.
 
 Multiple projects can run simultaneously (each gets its own tmux session and mailbox).
 
