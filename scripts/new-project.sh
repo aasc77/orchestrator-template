@@ -186,20 +186,11 @@ PMEOF
         head -20 "$PM_TMPDIR/prd.md" | sed 's/^/    /'
         echo "    ..."
         echo ""
-        read -r -p "  Save PRD to a project's QA mailbox? [folder name or n]: " SAVE_TARGET
-        if [[ -n "$SAVE_TARGET" && "$SAVE_TARGET" != "n" ]]; then
-            SAVE_KEY="${SAVE_TARGET//_/-}"
-            SAVE_MAILBOX="$ROOT_DIR/shared/$SAVE_KEY/mailbox/to_qa"
-            if [[ -d "$SAVE_MAILBOX" ]]; then
-                cp "$PM_TMPDIR/prd.md" "$SAVE_MAILBOX/prd.md"
-                success "Saved PRD to $SAVE_MAILBOX/prd.md"
-            else
-                warn "Mailbox not found: $SAVE_MAILBOX"
-                warn "PRD remains at: $PM_TMPDIR/prd.md"
-            fi
-        else
-            info "PRD remains at: $PM_TMPDIR/prd.md"
-        fi
+        echo "  ${BOLD}Next step:${RESET} Run this wizard again, pick mode 2 or 3,"
+        echo "  and provide this PRD path when prompted:"
+        echo ""
+        echo "    ${CYAN}$PM_TMPDIR/prd.md${RESET}"
+        echo ""
     else
         warn "No prd.md generated. Check $PM_TMPDIR for output."
     fi
@@ -219,6 +210,30 @@ fi
 if [[ ! -f "$PROMPT_FILE" ]]; then
     error "Prompt file not found: $PROMPT_FILE"
     exit 1
+fi
+echo ""
+
+# ─── Optional PRD import ───────────────────────────────────────────────────
+PRD_PATH=""
+echo "  Do you have a PRD to guide the agents?"
+echo ""
+echo "    1) No PRD -- start without one"
+echo "    2) Yes -- provide path to a PRD file"
+echo ""
+read -r -p "  Choice [1/2]: " PRD_CHOICE
+PRD_CHOICE="${PRD_CHOICE:-1}"
+
+if [[ "$PRD_CHOICE" == "2" ]]; then
+    echo ""
+    read -r -p "  Path to PRD file: " PRD_INPUT
+    PRD_INPUT="${PRD_INPUT/#\~/$HOME}"
+
+    if [[ -f "$PRD_INPUT" ]]; then
+        PRD_PATH="$PRD_INPUT"
+        success "PRD found: $PRD_PATH"
+    else
+        warn "File not found: $PRD_INPUT -- continuing without PRD"
+    fi
 fi
 echo ""
 
@@ -491,6 +506,21 @@ if [[ -f "$REPO_DIR/CLAUDE.md" ]]; then
     else
         rm "$REPO_DIR/CLAUDE.md"
     fi
+fi
+
+# ─── Phase 4b: Copy PRD into repo ────────────────────────────────────────────
+if [[ -n "$PRD_PATH" ]]; then
+    cp "$PRD_PATH" "$REPO_DIR/prd.md"
+    git -C "$REPO_DIR" add prd.md
+    git -C "$REPO_DIR" commit --quiet -m "chore: add PRD for project reference"
+    success "Copied PRD to $REPO_DIR/prd.md"
+
+    # Sync PRD into all worktrees
+    for wt_name in qa dev refactor; do
+        wt_path="$REPO_DIR/.worktrees/$wt_name"
+        git -C "$wt_path" merge --quiet "$DEFAULT_BRANCH" 2>/dev/null || true
+    done
+    info "Synced PRD into all worktrees"
 fi
 
 # ─── Phase 5: Confirmation summary ───────────────────────────────────────────
@@ -813,6 +843,21 @@ QA_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "qa_agent/CLAUDE.md")
 DEV_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "dev_agent/CLAUDE.md")
 REFACTOR_ROLE_PROMPT=$(extract_prompt "$PROMPT_FILE" "refactor_agent/CLAUDE.md")
 
+# --- Build PRD section for CLAUDE.md files ---
+PRD_CLAUDE_SECTION=""
+if [[ -n "$PRD_PATH" ]]; then
+    PRD_CLAUDE_SECTION="
+
+---
+
+## Product Requirements Document
+
+A PRD is available at \`prd.md\` in the repo root (also in your worktree).
+Read it before starting any task. Every test and implementation MUST trace back to a requirement in the PRD.
+Use the PRD's acceptance criteria, edge cases, and error states to guide your work.
+"
+fi
+
 # --- Dev CLAUDE.md ---
 if [[ -f "$DEV_DIR/CLAUDE.md" ]]; then
     if grep -q "agent-bridge" "$DEV_DIR/CLAUDE.md" 2>/dev/null; then
@@ -826,6 +871,9 @@ else
         printf '%s\n\n' "# Dev Agent (GREEN) -- $PROJECT_NAME"
         printf '%s\n' "$DEV_ROLE_PROMPT"
         printf '%s\n' "$DEV_MCP_SECTION"
+        if [[ -n "$PRD_CLAUDE_SECTION" ]]; then
+            printf '%s\n' "$PRD_CLAUDE_SECTION"
+        fi
     } > "$DEV_DIR/CLAUDE.md"
     info "Created $DEV_DIR/CLAUDE.md"
 fi
@@ -843,6 +891,9 @@ else
         printf '%s\n\n' "# QA Agent (RED) -- $PROJECT_NAME"
         printf '%s\n' "$QA_ROLE_PROMPT"
         printf '%s\n' "$QA_MCP_SECTION"
+        if [[ -n "$PRD_CLAUDE_SECTION" ]]; then
+            printf '%s\n' "$PRD_CLAUDE_SECTION"
+        fi
     } > "$QA_DIR/CLAUDE.md"
     info "Created $QA_DIR/CLAUDE.md"
 fi
@@ -860,6 +911,9 @@ else
         printf '%s\n\n' "# Refactor Agent (BLUE) -- $PROJECT_NAME"
         printf '%s\n' "$REFACTOR_ROLE_PROMPT"
         printf '%s\n' "$REFACTOR_MCP_SECTION"
+        if [[ -n "$PRD_CLAUDE_SECTION" ]]; then
+            printf '%s\n' "$PRD_CLAUDE_SECTION"
+        fi
     } > "$REFACTOR_DIR/CLAUDE.md"
     info "Created $REFACTOR_DIR/CLAUDE.md"
 fi
