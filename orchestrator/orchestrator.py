@@ -289,15 +289,16 @@ def tmux_clear(agent: str):
         logger.warning(f"Failed to send /clear to {agent}: {e}")
 
 
-def tmux_nudge(agent: str):
+def tmux_nudge(agent: str, retries: int = 0, max_retries: int = 3, retry_delay: float = 5.0):
     """Send a nudge to an agent's tmux window via send-keys.
 
     Includes cooldown to prevent stacking multiple nudges.
+    Retries on timeout to handle post-/clear delays.
     Gracefully degrades if tmux is unavailable or session is gone.
     """
     now = time.time()
     last = _last_nudge.get(agent, 0)
-    if now - last < tmux_nudge_cooldown:
+    if retries == 0 and now - last < tmux_nudge_cooldown:
         logger.debug(
             f"Skipping nudge to {agent} (cooldown: {int(tmux_nudge_cooldown - (now - last))}s remaining)"
         )
@@ -313,6 +314,10 @@ def tmux_nudge(agent: str):
         )
         if result.returncode != 0:
             logger.warning(f"tmux send-keys to {agent} failed (target={target}): {result.stderr.strip()}")
+            if retries < max_retries:
+                logger.info(f"Will retry nudge to {agent} in {retry_delay}s (attempt {retries + 1}/{max_retries})")
+                time.sleep(retry_delay)
+                return tmux_nudge(agent, retries=retries + 1, max_retries=max_retries, retry_delay=retry_delay)
             return
         time.sleep(0.2)
         subprocess.run(
@@ -325,6 +330,10 @@ def tmux_nudge(agent: str):
         logger.warning("tmux not found — nudge skipped (agents must poll manually)")
     except subprocess.TimeoutExpired:
         logger.warning(f"tmux send-keys to {agent} timed out")
+        if retries < max_retries:
+            logger.info(f"Will retry nudge to {agent} in {retry_delay}s (attempt {retries + 1}/{max_retries})")
+            time.sleep(retry_delay)
+            return tmux_nudge(agent, retries=retries + 1, max_retries=max_retries, retry_delay=retry_delay)
     except subprocess.SubprocessError as e:
         logger.warning(f"tmux nudge to {agent} failed: {e}")
 
@@ -650,6 +659,8 @@ def assign_task_to_qa(task: dict):
     if current_task_id is not None and current_task_id != task["id"]:
         for agent in ("qa", "dev", "refactor"):
             tmux_clear(agent)
+        # Wait for /clear to fully process in all agents before nudging
+        time.sleep(3)
 
     current_task_id = task["id"]
     create_task_branches(task["id"])
