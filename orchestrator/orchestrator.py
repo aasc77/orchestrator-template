@@ -175,10 +175,11 @@ _last_nudge = {}
 
 
 # --- Git helpers ---
-def run_git_command(cwd: str, *git_args) -> tuple[bool, str]:
+def run_git_command(cwd: str, *git_args, quiet: bool = False) -> tuple[bool, str]:
     """Run a git command in the given directory.
 
     Returns (success, output) tuple.
+    When quiet=True, failures are logged at DEBUG instead of WARNING (for expected failures).
     """
     cmd = ["git", "-C", cwd] + list(git_args)
     try:
@@ -190,7 +191,10 @@ def run_git_command(cwd: str, *git_args) -> tuple[bool, str]:
         )
         output = (result.stdout + result.stderr).strip()
         if result.returncode != 0:
-            logger.warning(f"Git command failed: {' '.join(cmd)}\n  {output}")
+            if quiet:
+                logger.debug(f"Git command returned non-zero (expected): {' '.join(cmd)}")
+            else:
+                logger.warning(f"Git command failed: {' '.join(cmd)}\n  {output}")
             return False, output
         return True, output
     except subprocess.TimeoutExpired:
@@ -290,11 +294,44 @@ def tmux_clear(agent: str):
         logger.warning(f"Failed to send /clear to {agent}: {e}")
 
 
+def _pane_has_prompt(target: str) -> bool:
+    """Check if a tmux pane shows a ready prompt (> at end of last line)."""
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", target, "-p", "-l", "5"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return False
+        lines = [l.rstrip() for l in result.stdout.splitlines() if l.strip()]
+        if not lines:
+            return False
+        last_line = lines[-1]
+        # Claude Code shows ">" or "❯" when ready for input
+        return last_line.endswith(">") or last_line.endswith("❯") or "> " in last_line
+    except (subprocess.SubprocessError, subprocess.TimeoutExpired):
+        return False
+
+
+def _wait_for_pane_ready(agent: str, max_wait: float = 20.0, poll_interval: float = 2.0) -> bool:
+    """Wait until an agent's pane shows a ready prompt, up to max_wait seconds."""
+    target = _agent_pane_targets.get(agent, f"{tmux_session}:{agent}")
+    elapsed = 0.0
+    while elapsed < max_wait:
+        if _pane_has_prompt(target):
+            return True
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+    logger.debug(f"Pane {agent} not ready after {max_wait}s -- nudging anyway")
+    return False
+
+
 def tmux_nudge(agent: str, retries: int = 0, max_retries: int = 3, retry_delay: float = 5.0):
     """Send a nudge to an agent's tmux window via send-keys.
 
     Includes cooldown to prevent stacking multiple nudges.
-    Retries on timeout to handle post-/clear delays.
+    Waits for the pane to show a ready prompt before sending.
+    Retries on failure with backoff.
     Gracefully degrades if tmux is unavailable or session is gone.
     """
     now = time.time()
@@ -306,6 +343,11 @@ def tmux_nudge(agent: str, retries: int = 0, max_retries: int = 3, retry_delay: 
         return
 
     target = _agent_pane_targets.get(agent, f"{tmux_session}:{agent}")
+
+    # Wait for the agent's pane to be ready (shows prompt)
+    if retries == 0:
+        _wait_for_pane_ready(agent)
+
     try:
         # Send text and Enter separately — Claude Code's TUI needs a brief
         # gap between input and submit for the keypress to register.
@@ -666,8 +708,8 @@ Data: {json.dumps(event_data, indent=2)}
 def create_task_branches(task_id: str):
     """Create red/green/blue branches for a new task in each worktree.
 
-    Always branches from the default branch (main) to ensure a clean start.
-    Deletes stale branches from previous runs before creating.
+    If a branch already exists (e.g., from a restart), checks it out silently.
+    Otherwise, branches from the default branch for a clean start.
     """
     if not repo_dir:
         return
@@ -681,31 +723,33 @@ def create_task_branches(task_id: str):
         wt_dir = agents_cfg.get(agent, {}).get("working_dir", "")
         if not wt_dir:
             continue
-        # First checkout the default branch to have a clean base
-        run_git_command(wt_dir, "checkout", default_branch)
-        # Delete stale branch from previous runs if it exists
-        exists, _ = run_git_command(wt_dir, "rev-parse", "--verify", branch)
+        # Check if branch already exists (quiet -- expected to fail for new tasks)
+        exists, _ = run_git_command(wt_dir, "rev-parse", "--verify", branch, quiet=True)
         if exists:
-            run_git_command(wt_dir, "branch", "-D", branch)
-            logger.info(f"Deleted stale {branch} in {agent} worktree")
-        # Create fresh branch from default branch
-        success, output = run_git_command(wt_dir, "checkout", "-b", branch)
-        if success:
-            logger.info(f"Created {branch} from {default_branch} in {agent} worktree")
+            # Branch exists -- just check it out (e.g., resuming after restart)
+            success, output = run_git_command(wt_dir, "checkout", branch, quiet=True)
+            if success:
+                logger.info(f"Checked out existing {branch} in {agent} worktree")
+            else:
+                logger.warning(f"Failed to checkout existing {branch} in {agent}: {output}")
         else:
-            logger.warning(f"Failed to create {branch} in {agent}: {output}")
+            # New task -- checkout default branch first, then create task branch
+            run_git_command(wt_dir, "checkout", default_branch, quiet=True)
+            success, output = run_git_command(wt_dir, "checkout", "-b", branch)
+            if success:
+                logger.info(f"Created {branch} from {default_branch} in {agent} worktree")
+            else:
+                logger.warning(f"Failed to create {branch} in {agent}: {output}")
 
 
 def assign_task_to_qa(task: dict):
     """Write a task assignment to QA's mailbox."""
     global rgr_state, current_task_id
 
-    # Clear agent contexts and create task branches for new tasks
+    # Clear agent contexts for new tasks (pane readiness checked by tmux_nudge)
     if current_task_id is not None and current_task_id != task["id"]:
         for agent in ("qa", "dev", "refactor"):
             tmux_clear(agent)
-        # Wait for /clear to fully process in all agents before nudging
-        time.sleep(3)
 
     current_task_id = task["id"]
     create_task_branches(task["id"])
@@ -925,10 +969,7 @@ def handle_refactor_message(message: dict):
         if next_task:
             assign_task_to_qa(next_task)
         else:
-            logger.info("ALL TASKS COMPLETED!")
-            for agent in ("qa", "dev", "refactor"):
-                write_to_mailbox(agent, "all_done", {"message": "All tasks complete! Great work."})
-                tmux_nudge(agent)
+            _notify_all_done()
 
     elif status == "fail":
         # Refactor broke tests -- send back to Dev
@@ -970,6 +1011,52 @@ def handle_refactor_message(message: dict):
             msg = decision.get("message", "Unknown issue")
             print(f"\nHUMAN REVIEW NEEDED: {msg}\n")
             logger.warning(f"Flagged for human: {msg}")
+
+
+_all_done_notified = False
+
+
+def _notify_all_done():
+    """Notify the user that all tasks are completed."""
+    global _all_done_notified
+    if _all_done_notified:
+        return
+    _all_done_notified = True
+
+    completed = sum(1 for t in tasks if t["status"] == "completed")
+    stuck = sum(1 for t in tasks if t["status"] == "stuck")
+    total = len(tasks)
+
+    banner = f"ALL {completed}/{total} TASKS COMPLETED"
+    if stuck:
+        banner += f" ({stuck} stuck)"
+
+    # Print banner to ORCH pane
+    print(f"\n{'=' * 50}")
+    print(f"  {banner}")
+    print(f"{'=' * 50}\n")
+
+    logger.info(banner)
+    log_to_report(f"**{banner}**\n")
+
+    # macOS notification
+    try:
+        subprocess.run(
+            ["osascript", "-e",
+             f'display notification "{completed} completed, {stuck} stuck" '
+             f'with title "RGR Orchestrator" subtitle "{banner}"'],
+            capture_output=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        pass
+
+    # Terminal bell (iTerm2 will badge/bounce)
+    print("\a", end="", flush=True)
+
+    # Notify agents
+    for agent in ("qa", "dev", "refactor"):
+        write_to_mailbox(agent, "all_done", {"message": "All tasks complete! Great work."})
+        tmux_nudge(agent)
 
 
 def main():
@@ -1073,9 +1160,7 @@ def main():
                     t["status"] in ("completed", "stuck") for t in tasks
                 )
                 if all_done and any(t["status"] == "completed" for t in tasks):
-                    completed = sum(1 for t in tasks if t["status"] == "completed")
-                    stuck = sum(1 for t in tasks if t["status"] == "stuck")
-                    logger.info(f"All tasks processed: {completed} completed, {stuck} stuck -- still polling")
+                    _notify_all_done()
 
             time.sleep(poll_interval)
 
