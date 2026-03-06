@@ -73,7 +73,7 @@ my-orchestrator/scripts/new-project.sh
 What it does:
 1. **From scratch**: You describe your idea, Claude generates a strict PRD with happy paths, edge cases, and error states
 2. **Review existing**: You provide a file path to your PRD, Claude reads it, discusses gaps and improvements with you, then writes the refined version
-3. **Exits** -- PM mode does not start the RGR pipeline. It prints the `prd.md` path for the next step.
+3. **Exits** -- PM mode does not start the RGR pipeline. It prints the `output.prd` path for the next step.
 
 After the PRD is ready, run the wizard again and select mode 2 (New Project) or 3 (Existing Project). The wizard will ask if you have a PRD -- provide the path and it feeds into the **Task Planner**.
 
@@ -183,7 +183,7 @@ After the wizard finishes, customize the generated files:
 2. Fill in the `<!-- TODO -->` placeholders in `CLAUDE.md` in each worktree directory
 3. Launch with `my-orchestrator/scripts/start.sh <name>`
 
-If a PRD was provided, it's committed to the repo root as `prd.md` and all agent `CLAUDE.md` files include a section instructing them to reference it.
+If a PRD was provided, it's committed to the repo root as `project.prd` and all agent `CLAUDE.md` files include a section instructing them to reference it.
 
 Multiple projects can run simultaneously (each gets its own tmux session and mailbox).
 

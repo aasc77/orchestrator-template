@@ -18,7 +18,7 @@ mcp-bridge/index.js        MCP server exposing mailbox tools to Claude Code agen
 
 The wizard (`new-project.sh`) presents three options:
 
-1. **PM Pre-Flight** -- Launches Claude Code as a PM agent to either generate a PRD from a vague idea or review/refine an existing PRD via conversation. Standalone step that exits after producing `prd.md`. Does not start the RGR pipeline. Prompt templates: `docs/pm_agent.md` (`pm_agent/CLAUDE.md` for scratch, `pm_agent_review/CLAUDE.md` for review).
+1. **PM Pre-Flight** -- Launches Claude Code as a PM agent to either generate a PRD from a vague idea or review/refine an existing PRD via conversation. Standalone step that exits after producing `output.prd`. Does not start the RGR pipeline. Prompt templates: `docs/pm_agent.md` (`pm_agent/CLAUDE.md` for scratch, `pm_agent_review/CLAUDE.md` for review).
 
 2. **New Project (`mode: new`)** -- Classic TDD. QA writes failing tests, Dev writes minimum code to pass, Refactor cleans up. Agent prompts loaded from `docs/NEW PROJECT PROMPTS.md`.
 
@@ -28,7 +28,7 @@ The wizard (`new-project.sh`) presents three options:
 
 After mode selection, the wizard asks "Do you have a PRD?" If yes:
 
-1. PRD is copied to the repo root as `prd.md`, committed, and merged into all worktrees
+1. PRD is copied to the repo root as `project.prd`, committed, and merged into all worktrees
 2. An interactive **Task Planner** session launches -- Claude reads the PRD, proposes a task breakdown, discusses scope/dependencies/priorities with you, and writes `tasks.json` only after you approve
 3. All agent `CLAUDE.md` files get a PRD reference section instructing them to trace work back to PRD requirements
 

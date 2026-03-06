@@ -114,7 +114,7 @@ if [[ "$PROJECT_MODE" == "pm" ]]; then
         PM_PROMPT=$(extract_prompt "$PM_PROMPT_FILE" "pm_agent_review/CLAUDE.md")
 
         # Copy PRD into temp dir so the agent can read it
-        cp "$PRD_INPUT_PATH" "$PM_TMPDIR/existing-prd.md"
+        cp "$PRD_INPUT_PATH" "$PM_TMPDIR/existing.prd"
 
         cat > "$PM_TMPDIR/CLAUDE.md" <<PMEOF
 $PM_PROMPT
@@ -122,17 +122,17 @@ $PM_PROMPT
 ---
 
 ## Existing PRD
-Read the file \`existing-prd.md\` in this directory. This is the user's current PRD.
+Read the file \`existing.prd\` in this directory. This is the user's current PRD.
 
 ## Process
-1. Read existing-prd.md
+1. Read existing.prd
 2. Summarize it back to the user
 3. Discuss gaps, ambiguities, and improvements
-4. When the user is satisfied, write the final refined version to \`prd.md\`
-5. After writing prd.md, tell the user: "PRD written! Type /exit to continue." and stop.
+4. When the user is satisfied, write the final refined version to \`output.prd\`
+5. After writing output.prd, tell the user: "PRD written! Type /exit to continue." and stop.
 PMEOF
 
-        PM_INITIAL_PROMPT="Read existing-prd.md and start the review. Summarize the PRD's scope and key requirements, then identify any gaps or areas to discuss."
+        PM_INITIAL_PROMPT="Read existing.prd and start the review. Summarize the PRD's scope and key requirements, then identify any gaps or areas to discuss."
 
         info "Launching Claude Code as PM agent (review mode)..."
         info "PRD loaded from: $PRD_INPUT_PATH"
@@ -159,7 +159,7 @@ $PM_PROMPT
 $USER_IDEA
 
 ## Output
-Write the complete PRD to a file called \`prd.md\` in this directory.
+Write the complete PRD to a file called \`output.prd\` in this directory.
 PMEOF
 
         PM_INITIAL_PROMPT="Generate a comprehensive PRD based on the user's idea described in CLAUDE.md."
@@ -170,7 +170,7 @@ PMEOF
     echo "  Working dir: $PM_TMPDIR"
     echo ""
     if [[ "$PM_CHOICE" == "2" ]]; then
-        echo "  ${YELLOW}When the PM finishes writing prd.md, type /exit to continue.${RESET}"
+        echo "  ${YELLOW}When the PM finishes writing output.prd, type /exit to continue.${RESET}"
         echo ""
     fi
 
@@ -188,20 +188,20 @@ PMEOF
     echo ""
 
     # Check for generated PRD
-    if [[ -f "$PM_TMPDIR/prd.md" ]]; then
-        success "PRD ready: $PM_TMPDIR/prd.md"
+    if [[ -f "$PM_TMPDIR/output.prd" ]]; then
+        success "PRD ready: $PM_TMPDIR/output.prd"
         echo ""
         echo "  ${BOLD}Preview (first 20 lines):${RESET}"
-        head -20 "$PM_TMPDIR/prd.md" | sed 's/^/    /'
+        head -20 "$PM_TMPDIR/output.prd" | sed 's/^/    /'
         echo "    ..."
         echo ""
         echo "  ${BOLD}Next step:${RESET} Run this wizard again, pick mode 2 or 3,"
         echo "  and provide this PRD path when prompted:"
         echo ""
-        echo "    ${CYAN}$PM_TMPDIR/prd.md${RESET}"
+        echo "    ${CYAN}$PM_TMPDIR/output.prd${RESET}"
         echo ""
     else
-        warn "No prd.md generated. Check $PM_TMPDIR for output."
+        warn "No output.prd generated. Check $PM_TMPDIR for output."
     fi
 
     exit 0
@@ -224,24 +224,64 @@ echo ""
 
 # ─── Optional PRD import ───────────────────────────────────────────────────
 PRD_PATH=""
-echo "  Do you have a PRD to guide the agents?"
-echo ""
-echo "    1) No PRD -- start without one"
-echo "    2) Yes -- provide path to a PRD file"
-echo ""
-read -r -p "  Choice [1/2]: " PRD_CHOICE
-PRD_CHOICE="${PRD_CHOICE:-1}"
 
-if [[ "$PRD_CHOICE" == "2" ]]; then
+# Auto-discover .prd files in common locations
+PRD_FILES=()
+for search_dir in "$HOME/Repositories/PRDs" "$HOME/PRDs" "$HOME/Documents" "."; do
+    if [[ -d "$search_dir" ]]; then
+        while IFS= read -r -d '' f; do
+            PRD_FILES+=("$f")
+        done < <(find "$search_dir" -maxdepth 1 -name "*.prd" -type f -print0 2>/dev/null)
+    fi
+done
+
+if [[ ${#PRD_FILES[@]} -gt 0 ]]; then
+    echo "  Found .prd files:"
     echo ""
-    read -r -p "  Path to PRD file: " PRD_INPUT
-    PRD_INPUT="${PRD_INPUT/#\~/$HOME}"
+    for i in "${!PRD_FILES[@]}"; do
+        printf "    %3d) %s\n" "$((i + 1))" "${PRD_FILES[$i]}"
+    done
+    printf "    %3d) No PRD -- start without one\n" "$((${#PRD_FILES[@]} + 1))"
+    printf "    %3d) Other -- provide a custom path\n" "$((${#PRD_FILES[@]} + 2))"
+    echo ""
+    read -r -p "  Choice [1-$((${#PRD_FILES[@]} + 2))]: " PRD_CHOICE
 
-    if [[ -f "$PRD_INPUT" ]]; then
-        PRD_PATH="$PRD_INPUT"
+    if [[ "$PRD_CHOICE" =~ ^[0-9]+$ ]] && (( PRD_CHOICE >= 1 && PRD_CHOICE <= ${#PRD_FILES[@]} )); then
+        PRD_PATH="${PRD_FILES[$((PRD_CHOICE - 1))]}"
         success "PRD found: $PRD_PATH"
+    elif [[ "$PRD_CHOICE" == "$((${#PRD_FILES[@]} + 2))" ]]; then
+        echo ""
+        read -r -p "  Path to PRD file (.prd): " PRD_INPUT
+        PRD_INPUT="${PRD_INPUT/#\~/$HOME}"
+        if [[ -f "$PRD_INPUT" ]]; then
+            PRD_PATH="$PRD_INPUT"
+            success "PRD found: $PRD_PATH"
+        else
+            warn "File not found: $PRD_INPUT -- continuing without PRD"
+        fi
     else
-        warn "File not found: $PRD_INPUT -- continuing without PRD"
+        info "Continuing without PRD"
+    fi
+else
+    echo "  Do you have a PRD (.prd file) to guide the agents?"
+    echo ""
+    echo "    1) No PRD -- start without one"
+    echo "    2) Yes -- provide path to a .prd file"
+    echo ""
+    read -r -p "  Choice [1/2]: " PRD_CHOICE
+    PRD_CHOICE="${PRD_CHOICE:-1}"
+
+    if [[ "$PRD_CHOICE" == "2" ]]; then
+        echo ""
+        read -r -p "  Path to PRD file (.prd): " PRD_INPUT
+        PRD_INPUT="${PRD_INPUT/#\~/$HOME}"
+
+        if [[ -f "$PRD_INPUT" ]]; then
+            PRD_PATH="$PRD_INPUT"
+            success "PRD found: $PRD_PATH"
+        else
+            warn "File not found: $PRD_INPUT -- continuing without PRD"
+        fi
     fi
 fi
 echo ""
@@ -279,9 +319,21 @@ if [[ -z "$FOLDER_NAME" && "$PROJECT_MODE" == "existing" ]]; then
     fi
 fi
 
+# Suggest folder name from PRD filename if available
+SUGGESTED_NAME=""
+if [[ -n "$PRD_PATH" ]]; then
+    SUGGESTED_NAME=$(basename "$PRD_PATH" .prd)
+    SUGGESTED_NAME=$(echo "$SUGGESTED_NAME" | tr '[:upper:]' '[:lower:]')
+fi
+
 while true; do
     if [[ -z "$FOLDER_NAME" ]]; then
-        read -r -p "  Folder name (in ~/Repositories/): " FOLDER_NAME
+        if [[ -n "$SUGGESTED_NAME" ]]; then
+            read -r -p "  Name for the new project folder (will be created at $REPOS_DIR/<name>) [$SUGGESTED_NAME]: " FOLDER_NAME
+            FOLDER_NAME="${FOLDER_NAME:-$SUGGESTED_NAME}"
+        else
+            read -r -p "  Name for the new project folder (will be created at $REPOS_DIR/<name>): " FOLDER_NAME
+        fi
     fi
 
     if [[ -z "$FOLDER_NAME" ]]; then
@@ -519,10 +571,10 @@ fi
 
 # ─── Phase 4b: Copy PRD into repo ────────────────────────────────────────────
 if [[ -n "$PRD_PATH" ]]; then
-    cp "$PRD_PATH" "$REPO_DIR/prd.md"
-    git -C "$REPO_DIR" add prd.md
+    cp "$PRD_PATH" "$REPO_DIR/project.prd"
+    git -C "$REPO_DIR" add project.prd
     git -C "$REPO_DIR" commit --quiet -m "chore: add PRD for project reference"
-    success "Copied PRD to $REPO_DIR/prd.md"
+    success "Copied PRD to $REPO_DIR/project.prd"
 
     # Sync PRD into all worktrees
     for wt_name in qa dev refactor; do
@@ -654,7 +706,7 @@ elif [[ -n "$PRD_PATH" ]]; then
     info "Launching Task Planner to decompose PRD into RGR tasks..."
     echo ""
     TASK_GEN_TMPDIR=$(mktemp -d)
-    cp "$PRD_PATH" "$TASK_GEN_TMPDIR/prd.md"
+    cp "$PRD_PATH" "$TASK_GEN_TMPDIR/project.prd"
 
     cat > "$TASK_GEN_TMPDIR/CLAUDE.md" <<'TASKGENEOF'
 # Task Planner
@@ -662,7 +714,7 @@ elif [[ -n "$PRD_PATH" ]]; then
 You are a task planning agent. You read a PRD and collaborate with the user to produce a well-scoped tasks.json file for a Red-Green-Refactor development pipeline.
 
 ## Process
-1. Read `prd.md`
+1. Read `project.prd`
 2. Propose a task breakdown to the user -- show a numbered list with task titles, short descriptions, and key acceptance criteria
 3. Discuss with the user: ask about priorities, scope questions, whether tasks should be split or merged, dependency ordering
 4. Iterate until the user approves the plan
@@ -684,7 +736,7 @@ You are a task planning agent. You read a PRD and collaborate with the user to p
 When writing tasks.json, output ONLY valid JSON with keys: "project" (string) and "tasks" (array). No markdown fences.
 TASKGENEOF
 
-    TASK_GEN_PROMPT="Read prd.md. Propose a task breakdown for the RGR pipeline. Show me the list and let's discuss before you write tasks.json."
+    TASK_GEN_PROMPT="Read project.prd. Propose a task breakdown for the RGR pipeline. Show me the list and let's discuss before you write tasks.json."
 
     echo "  Working dir: $TASK_GEN_TMPDIR"
     echo ""
@@ -712,7 +764,7 @@ TASKGENEOF
     {
       "id": "rgr-1",
       "title": "PLACEHOLDER -- replace with real tasks from PRD",
-      "description": "The task planner did not produce valid JSON. Read prd.md in the repo root and manually create tasks.",
+      "description": "The task planner did not produce valid JSON. Read project.prd in the repo root and manually create tasks.",
       "acceptance_criteria": ["Replace this task with real ones from the PRD"],
       "status": "pending",
       "attempts": 0,
@@ -732,7 +784,7 @@ EOF
     {
       "id": "rgr-1",
       "title": "PLACEHOLDER -- replace with real tasks from PRD",
-      "description": "The task planner did not produce a file. Read prd.md in the repo root and manually create tasks.",
+      "description": "The task planner did not produce a file. Read project.prd in the repo root and manually create tasks.",
       "acceptance_criteria": ["Replace this task with real ones from the PRD"],
       "status": "pending",
       "attempts": 0,
@@ -1008,7 +1060,7 @@ if [[ -n "$PRD_PATH" ]]; then
 
 ## Product Requirements Document
 
-A PRD is available at \`prd.md\` in the repo root (also in your worktree).
+A PRD is available at \`project.prd\` in the repo root (also in your worktree).
 Read it before starting any task. Every test and implementation MUST trace back to a requirement in the PRD.
 Use the PRD's acceptance criteria, edge cases, and error states to guide your work.
 "
@@ -1079,7 +1131,7 @@ if [[ ! -f "$REPO_DIR/README.md" ]]; then
     PRD_LINE=""
     if [[ -n "$PRD_PATH" ]]; then
         PRD_LINE="
-See \`prd.md\` for the full product requirements document."
+See \`project.prd\` for the full product requirements document."
     fi
 
     if [[ "$PROJECT_MODE" == "existing" ]]; then
@@ -1111,7 +1163,7 @@ $WORKFLOW_DESC
 \`\`\`
 $FOLDER_NAME/
 ├── tests/              # Test files
-├── prd.md              # Product requirements (if provided)
+├── project.prd         # Product requirements (if provided)
 └── ...                 # Implementation files
 \`\`\`
 
