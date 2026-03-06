@@ -52,6 +52,21 @@ vi <your-repo>/.worktrees/refactor/CLAUDE.md        # Refactor: code style, guid
 
 If you provided a PRD, `tasks.json` already has real tasks from the Task Planner and each agent `CLAUDE.md` includes a PRD reference section. Fill in the `<!-- TODO -->` placeholders the wizard left in each `CLAUDE.md`. The more project context you add, the better the agents perform.
 
+### Test Quality Rules (optional)
+
+In `projects/<name>/config.yaml`:
+
+```yaml
+# Add project-specific test quality rules (injected into QA task assignments)
+test_quality:
+  require_integration_tests: true
+  require_fixture_diversity: true
+  custom_rules:
+    - "All CLI flag assertions must check the exact flag string"
+```
+
+See [CONTEXT.md](CONTEXT.md) for details.
+
 ## 5. Launch
 
 ```bash

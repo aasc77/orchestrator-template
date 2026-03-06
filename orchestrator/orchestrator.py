@@ -783,6 +783,24 @@ def assign_task_to_qa(task: dict):
     if source_file:
         content["source_file"] = source_file
 
+    # Inject test quality rules from config (Layer 3)
+    tq = config.get("test_quality", {})
+    quality_rules = []
+    if tq.get("require_integration_tests", False):
+        quality_rules.append(
+            "Write tests at TWO levels: unit (mocked) AND integration (real I/O). "
+            "Do not rely solely on mocked unit tests."
+        )
+    if tq.get("require_fixture_diversity", False):
+        quality_rules.append(
+            "Include diverse fixtures: ~ paths, relative paths, paths with spaces, "
+            "multi-host configs, set/unset env vars. Never use only absolute /tmp/ paths."
+        )
+    for rule in tq.get("custom_rules", []):
+        quality_rules.append(rule)
+    if quality_rules:
+        content["test_quality_rules"] = quality_rules
+
     write_to_mailbox("qa", "task_assignment", content)
     tmux_nudge("qa")
     task["status"] = "in_progress"

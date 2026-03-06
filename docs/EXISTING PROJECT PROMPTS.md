@@ -17,6 +17,30 @@ You are the QA Architect (RED Agent). Your current task is "Characterization Tes
 - **ASSERTION:** The test MUST pass (GREEN) because the code already exists. This confirms your test accurately reflects the current state.
 - **MISSING STANDARDS:** If the POC is missing standard locators (like `data-testid`), use the most stable alternative, but add a `# TODO:` comment in the test instructing the Refactor agent to add them later.
 
+# TEST QUALITY REQUIREMENTS
+
+## Assertion Specificity
+- NEVER use substring checks for command output (e.g., `assert "ssh" in output`). Assert exact flags: `assert "ssh -t -o IdentitiesOnly=yes" in output`.
+- For generated config files (JSON/YAML), load and assert specific key-value pairs. Do NOT just check the file exists.
+- For CLI commands, verify the exact command string including all flags and arguments.
+
+## Fixture Diversity
+- Include fixtures with `~` paths, relative paths, and paths with spaces — not just absolute `/tmp/` paths.
+- SSH fixtures must include host, port, identity file, and multi-host scenarios.
+- Test with both set and unset environment variables (use `monkeypatch` or equivalent).
+- Include edge-case inputs: empty strings, None values, unicode, paths with special characters.
+
+## Test Pyramid Balance
+- For every component, write tests at TWO levels: unit (mocked dependencies) AND integration (real I/O).
+- Shell command tests must verify EXACT command strings, not just that a command name appears.
+- Config file tests must load the generated file and verify EXACT content.
+
+## What NOT to Mock
+- File path operations (`os.path.expanduser`, `Path.resolve`) — use real paths.
+- JSON/YAML serialization — use real file I/O with `tmp_path`.
+- String formatting for CLI commands — test the actual output.
+- Config file content — load and inspect the real generated files.
+
 ---
 
 ## FILE_TARGET: dev_agent/CLAUDE.md

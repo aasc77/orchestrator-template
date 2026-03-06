@@ -28,6 +28,12 @@ tmux:
   nudge_prompt: "You have new messages. Use the check_messages MCP tool with your role to read and act on them."
   nudge_cooldown_seconds: 30
 
+# Test quality rules (injected into QA task assignments)
+test_quality:
+  require_integration_tests: true
+  require_fixture_diversity: true
+  custom_rules: []
+
 # Agent defaults (pane numbers: qa=0, dev=1, refactor=2, orch=3)
 agents:
   qa:

@@ -110,6 +110,21 @@ agents:
 
 Shared defaults in `orchestrator/config.yaml` (LLM model, polling interval, max retries, nudge cooldown). Project configs are deep-merged with shared defaults.
 
+### Test Quality Injection
+
+The orchestrator injects test quality rules into QA task assignments from config:
+
+```yaml
+test_quality:
+  require_integration_tests: true   # default: true
+  require_fixture_diversity: true   # default: true
+  custom_rules:
+    - "All CLI flag assertions must check the exact flag string"
+    - "Generated JSON configs must be loaded and key-value checked"
+```
+
+These rules appear as `test_quality_rules` in the QA mailbox message, complementing the static rules in the QA agent's `CLAUDE.md`.
+
 ## tmux Layout
 
 ```
