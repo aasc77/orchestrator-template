@@ -604,13 +604,6 @@ agents:
     working_dir: $REFACTOR_DIR
     pane: qa.2
 
-# Smoke test gate (runs after blue merge, before marking task complete)
-# Enable and customize scripts/smoke-test.sh in your repo
-smoke_test:
-  enabled: false
-  script: scripts/smoke-test.sh
-  timeout_seconds: 60
-
 # Test quality rules (injected into QA task assignments)
 test_quality:
   require_integration_tests: true
@@ -1209,51 +1202,6 @@ QSEOF
     info "Created QUICKSTART.md"
 else
     info "QUICKSTART.md already exists -- skipped"
-fi
-
-# --- scripts/smoke-test.sh scaffold ---
-SMOKE_DIR="$REPO_DIR/scripts"
-if [[ ! -f "$SMOKE_DIR/smoke-test.sh" ]]; then
-    mkdir -p "$SMOKE_DIR"
-    cat > "$SMOKE_DIR/smoke-test.sh" <<'SMOKEEOF'
-#!/usr/bin/env bash
-# Smoke test scaffold -- runs after each RGR task merges to main.
-# The orchestrator sets TASK_ID in the environment.
-# Exit 0 = pass, non-zero = fail (task marked 'stuck').
-#
-# Uncomment and customize the checks below for your project.
-# This script runs with NO LLM -- pure deterministic bash checks.
-
-set -euo pipefail
-
-echo "Smoke test: task=${TASK_ID:-unknown}"
-
-# --- Example checks (uncomment and adapt) ---
-
-# 1. Verify key files exist
-# [[ -f "src/main.py" ]] || { echo "FAIL: src/main.py missing"; exit 1; }
-
-# 2. Verify Python imports work
-# python3 -c "import mymodule" || { echo "FAIL: import mymodule"; exit 1; }
-
-# 3. Verify CLI --help works
-# python3 -m mymodule --help > /dev/null || { echo "FAIL: --help"; exit 1; }
-
-# 4. Verify generated configs are valid JSON
-# python3 -c "import json; json.load(open('config.json'))" || { echo "FAIL: invalid config.json"; exit 1; }
-
-# 5. Verify tests pass
-# python3 -m pytest tests/ -x -q || { echo "FAIL: tests"; exit 1; }
-
-echo "Smoke test passed"
-exit 0
-SMOKEEOF
-    chmod +x "$SMOKE_DIR/smoke-test.sh"
-    git -C "$REPO_DIR" add scripts/smoke-test.sh
-    git -C "$REPO_DIR" commit --quiet -m "chore: add smoke test scaffold"
-    info "Created scripts/smoke-test.sh (scaffold -- customize for your project)"
-else
-    info "scripts/smoke-test.sh already exists -- skipped"
 fi
 
 # Sync docs into worktrees

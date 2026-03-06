@@ -48,23 +48,16 @@ vi my-orchestrator/projects/<name>/tasks.json       # review tasks (auto-generat
 vi <your-repo>/.worktrees/qa/CLAUDE.md              # QA: test environment, credentials
 vi <your-repo>/.worktrees/dev/CLAUDE.md             # Dev: tech stack, architecture, patterns
 vi <your-repo>/.worktrees/refactor/CLAUDE.md        # Refactor: code style, guidelines
-vi <your-repo>/scripts/smoke-test.sh                # smoke test (uncomment checks for your project)
 ```
 
 If you provided a PRD, `tasks.json` already has real tasks from the Task Planner and each agent `CLAUDE.md` includes a PRD reference section. Fill in the `<!-- TODO -->` placeholders the wizard left in each `CLAUDE.md`. The more project context you add, the better the agents perform.
 
-### Smoke Test & Test Quality (optional)
+### Test Quality Rules (optional)
 
 In `projects/<name>/config.yaml`:
 
 ```yaml
-# Enable smoke test gate (runs after each blue merge)
-smoke_test:
-  enabled: true                    # set to true to activate
-  script: scripts/smoke-test.sh   # customize the scaffold in your repo
-  timeout_seconds: 60
-
-# Add project-specific test quality rules
+# Add project-specific test quality rules (injected into QA task assignments)
 test_quality:
   require_integration_tests: true
   require_fixture_diversity: true
@@ -72,7 +65,7 @@ test_quality:
     - "All CLI flag assertions must check the exact flag string"
 ```
 
-See [CONTEXT.md](CONTEXT.md) for details on these features.
+See [CONTEXT.md](CONTEXT.md) for details.
 
 ## 5. Launch
 

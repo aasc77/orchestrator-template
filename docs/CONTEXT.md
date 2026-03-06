@@ -53,7 +53,7 @@ Each worktree has its own `CLAUDE.md` with agent-specific instructions and MCP c
 The orchestrator cycles through these states per task:
 
 ```
-IDLE ──> WAITING_QA_RED ──> WAITING_DEV_GREEN ──> WAITING_REFACTOR_BLUE ──> RUNNING_SMOKE_TEST ──> IDLE (next task)
+IDLE ──> WAITING_QA_RED ──> WAITING_DEV_GREEN ──> WAITING_REFACTOR_BLUE ──> IDLE (next task)
                                                                       └──> BLOCKED (merge conflict)
 ```
 
@@ -61,9 +61,6 @@ Git merges happen between phases (bash subprocess, not LLM):
 - `red/<task>` merges into Dev's worktree before GREEN
 - `green/<task>` merges into Refactor's worktree before BLUE
 - `blue/<task>` merges into the default branch (main) after BLUE
-- After blue merge: **smoke test gate** runs `scripts/smoke-test.sh` (if enabled)
-  - Exit 0 → task completed
-  - Non-zero / timeout → task marked `stuck`, move to next task
 
 Merge conflicts set state to BLOCKED and flag human review.
 
@@ -112,19 +109,6 @@ agents:
 ```
 
 Shared defaults in `orchestrator/config.yaml` (LLM model, polling interval, max retries, nudge cooldown). Project configs are deep-merged with shared defaults.
-
-### Smoke Test Gate
-
-After a successful blue merge, the orchestrator can run a deterministic bash script before marking the task complete:
-
-```yaml
-smoke_test:
-  enabled: true                    # default: false
-  script: scripts/smoke-test.sh   # relative to repo_dir
-  timeout_seconds: 60
-```
-
-The script receives `TASK_ID` as an environment variable. Exit 0 = pass, non-zero = fail (task marked `stuck`). The wizard generates a scaffold at `scripts/smoke-test.sh` with commented examples.
 
 ### Test Quality Injection
 
