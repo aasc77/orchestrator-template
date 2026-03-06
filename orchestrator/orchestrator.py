@@ -19,6 +19,7 @@ Usage:
 import argparse
 import csv
 import json
+import os
 import subprocess
 import threading
 import queue
@@ -38,6 +39,7 @@ class RGRState(Enum):
     WAITING_QA_RED = "waiting_qa_red"
     WAITING_DEV_GREEN = "waiting_dev_green"
     WAITING_REFACTOR_BLUE = "waiting_refactor_blue"
+    RUNNING_SMOKE_TEST = "running_smoke_test"
     BLOCKED = "blocked"
 
 # --- Parse CLI args ---
@@ -783,6 +785,24 @@ def assign_task_to_qa(task: dict):
     if source_file:
         content["source_file"] = source_file
 
+    # Inject test quality rules from config (Layer 3)
+    tq = config.get("test_quality", {})
+    quality_rules = []
+    if tq.get("require_integration_tests", False):
+        quality_rules.append(
+            "Write tests at TWO levels: unit (mocked) AND integration (real I/O). "
+            "Do not rely solely on mocked unit tests."
+        )
+    if tq.get("require_fixture_diversity", False):
+        quality_rules.append(
+            "Include diverse fixtures: ~ paths, relative paths, paths with spaces, "
+            "multi-host configs, set/unset env vars. Never use only absolute /tmp/ paths."
+        )
+    for rule in tq.get("custom_rules", []):
+        quality_rules.append(rule)
+    if quality_rules:
+        content["test_quality_rules"] = quality_rules
+
     write_to_mailbox("qa", "task_assignment", content)
     tmux_nudge("qa")
     task["status"] = "in_progress"
@@ -925,6 +945,77 @@ def handle_dev_message(message: dict):
     log_to_report(f"**Dev (GREEN) complete: {task['id']}**\n\n{content.get('summary', 'No summary')}\n")
 
 
+def run_smoke_test(task: dict) -> bool:
+    """Run the project's smoke test script after blue merge.
+
+    Returns True if the smoke test passes (or is disabled), False on failure.
+    On failure, marks the task as 'stuck' and moves to IDLE.
+    """
+    global rgr_state
+
+    smoke_cfg = config.get("smoke_test", {})
+    if not smoke_cfg.get("enabled", False):
+        return True
+
+    script = smoke_cfg.get("script", "scripts/smoke-test.sh")
+    timeout = smoke_cfg.get("timeout_seconds", 60)
+
+    # Resolve script path relative to repo_dir
+    if repo_dir:
+        script_path = Path(repo_dir) / script
+    else:
+        script_path = Path(script)
+
+    if not script_path.is_file():
+        logger.warning(f"Smoke test script not found: {script_path} -- skipping")
+        return True
+
+    rgr_state = RGRState.RUNNING_SMOKE_TEST
+    logger.info(f"Running smoke test: {script_path} (timeout: {timeout}s)")
+    log_to_report(f"**Running smoke test for {task['id']}**: {script_path}")
+
+    try:
+        env = {**os.environ, "TASK_ID": task["id"]}
+        result = subprocess.run(
+            ["bash", str(script_path)],
+            cwd=repo_dir or str(script_path.parent),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+        if result.returncode == 0:
+            logger.info(f"Smoke test PASSED for task {task['id']}")
+            log_to_report(f"**Smoke test PASSED: {task['id']}**")
+            return True
+        else:
+            logger.error(f"Smoke test FAILED for task {task['id']}: exit {result.returncode}")
+            logger.error(f"stdout: {result.stdout[-500:]}" if result.stdout else "stdout: (empty)")
+            logger.error(f"stderr: {result.stderr[-500:]}" if result.stderr else "stderr: (empty)")
+            log_to_report(f"**Smoke test FAILED: {task['id']}** -- exit {result.returncode}\n\n```\n{result.stderr[-300:]}\n```\n")
+            task["status"] = "stuck"
+            save_tasks()
+            rgr_state = RGRState.IDLE
+            print(f"\nSMOKE TEST FAILED: Task {task['id']} - {task['title']}")
+            print(f"  Exit code: {result.returncode}")
+            if result.stderr:
+                print(f"  stderr: {result.stderr[-200:]}")
+            print(f"  Script: {script_path}\n")
+            return False
+    except subprocess.TimeoutExpired:
+        logger.error(f"Smoke test TIMED OUT for task {task['id']} ({timeout}s)")
+        log_to_report(f"**Smoke test TIMED OUT: {task['id']}** -- {timeout}s limit\n")
+        task["status"] = "stuck"
+        save_tasks()
+        rgr_state = RGRState.IDLE
+        print(f"\nSMOKE TEST TIMED OUT: Task {task['id']} ({timeout}s)\n")
+        return False
+    except Exception as e:
+        logger.error(f"Smoke test error for task {task['id']}: {e}")
+        log_to_report(f"**Smoke test ERROR: {task['id']}** -- {e}\n")
+        return True  # Don't block on unexpected errors, let task complete
+
+
 def handle_refactor_message(message: dict):
     """Handle message from Refactor: cleanup done -> merge into main or retry."""
     global rgr_state
@@ -957,7 +1048,18 @@ def handle_refactor_message(message: dict):
                 return
             logger.info(f"Merged {blue_branch} into {default_branch} successfully")
 
-        # Refactor succeeded -- task complete
+        # Run smoke test gate (if enabled)
+        if not run_smoke_test(task):
+            # Smoke test failed -- task marked stuck, state set to IDLE by run_smoke_test
+            log_to_report(f"**Refactor (BLUE) complete: {task['id']}**\n\n{content.get('summary', 'No summary')}\n")
+            next_idx, next_task = get_current_task()
+            if next_task:
+                assign_task_to_qa(next_task)
+            else:
+                _notify_all_done()
+            return
+
+        # Refactor succeeded + smoke test passed -- task complete
         task["status"] = "completed"
         save_tasks()
         rgr_state = RGRState.IDLE
