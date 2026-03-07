@@ -13,7 +13,7 @@ ollama serve   # leave running
 ## 2. Setup
 
 ```bash
-git clone https://github.com/aasc77/orchestrator-template.git my-orchestrator
+git clone https://github.com/aasc77/tdd-rgr-pipeline.git my-orchestrator
 my-orchestrator/scripts/setup.sh
 ```
 

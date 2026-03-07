@@ -15,7 +15,7 @@
 
 set -e
 
-IMAGE_DIR="$HOME/.config/orchestrator-template/images"
+IMAGE_DIR="$HOME/.config/tdd-rgr-pipeline/images"
 PLIST="$HOME/Library/Preferences/com.googlecode.iterm2.plist"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -49,7 +49,7 @@ python3 << 'PYEOF'
 import os
 from PIL import Image
 
-image_dir = os.path.expanduser("~/.config/orchestrator-template/images")
+image_dir = os.path.expanduser("~/.config/tdd-rgr-pipeline/images")
 
 red = Image.open(os.path.join(image_dir, "Red_robot.png")).convert("RGBA")
 green = Image.open(os.path.join(image_dir, "Green_rotbot.png")).convert("RGBA")
@@ -97,7 +97,7 @@ import os
 import copy
 
 plist_path = os.path.expanduser("~/Library/Preferences/com.googlecode.iterm2.plist")
-image_dir = os.path.expanduser("~/.config/orchestrator-template/images")
+image_dir = os.path.expanduser("~/.config/tdd-rgr-pipeline/images")
 composite_path = os.path.join(image_dir, "rgr_composite.png")
 
 with open(plist_path, "rb") as f:

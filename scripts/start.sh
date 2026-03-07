@@ -303,7 +303,7 @@ tmux select-pane -t "$SESSION:qa.2" -T "REFACTOR_BLUE [$PROJECT]"
 tmux select-pane -t "$SESSION:qa.3" -T "ORCH [$PROJECT]"
 
 # Check if the RGR composite background image exists
-COMPOSITE_IMG="$HOME/.config/orchestrator-template/images/rgr_composite.png"
+COMPOSITE_IMG="$HOME/.config/tdd-rgr-pipeline/images/rgr_composite.png"
 if [ -f "$COMPOSITE_IMG" ]; then
     # Transparent pane backgrounds -- let iTerm2's background image show through
     tmux select-pane -t "$SESSION:qa.0" -P 'bg=default'

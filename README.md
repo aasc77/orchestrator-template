@@ -104,7 +104,7 @@ Without a PRD, the wizard generates a sample greeting task for you to replace ma
 **1. Clone and install** (setup will prompt to create a project):
 
 ```bash
-git clone https://github.com/aasc77/orchestrator-template.git my-orchestrator
+git clone https://github.com/aasc77/tdd-rgr-pipeline.git my-orchestrator
 my-orchestrator/scripts/setup.sh
 ```
 
@@ -290,7 +290,7 @@ The wizard creates a `CLAUDE.md` in each agent's worktree directory (e.g., `.wor
 ## File Structure
 
 ```
-orchestrator-template/
+tdd-rgr-pipeline/
 ├── README.md
 ├── claude-code-mcp-config.json      # MCP config for Claude Code agents
 ├── images/                          # Robot background images (source PNGs)

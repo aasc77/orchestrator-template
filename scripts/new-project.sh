@@ -1176,7 +1176,7 @@ python3 -m pytest tests/ -v
 
 ## Orchestrator
 
-This project is managed by [orchestrator-template](https://github.com/aasc77/orchestrator-template).
+This project is managed by [tdd-rgr-pipeline](https://github.com/aasc77/tdd-rgr-pipeline).
 
 \`\`\`bash
 # Start the RGR pipeline
